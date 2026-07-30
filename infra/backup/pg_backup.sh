@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Compressed pg_dump into ./backups, with rotation.
+# Compressed pg_dump of the managed database into ./backups, with rotation.
 #
-# There is no managed-snapshot feature on a self-hosted VPS, so this is the
-# whole backup story. Run it from cron:
+# CHECK YOUR PROVIDER FIRST. Most managed Postgres services already take
+# automated snapshots with point-in-time recovery, which is strictly better than
+# this script: no cron to fail silently, and a recovery granularity of seconds
+# rather than a day. If yours does, enable it and DO NOT schedule this - a second
+# backup system nobody watches is a liability. Run this only when the provider
+# has no snapshot feature, or when you want an off-provider copy you control.
 #
-#   0 3 * * * cd /opt/geo-audit && ./infra/backup/pg_backup.sh >> /var/log/geo-backup.log 2>&1
+#   0 3 * * * cd /opt/checkgeo && ./infra/backup/pg_backup.sh >> /var/log/checkgeo-backup.log 2>&1
 #
 # A backup you have never restored is a hypothesis, not a backup - see
 # pg_restore.sh and the README's restore drill.
@@ -15,6 +19,9 @@ cd "$(dirname "$0")/../.."
 BACKUP_DIR="${BACKUP_DIR:-./backups}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 COMPOSE="${COMPOSE:-docker compose}"
+# Must be >= the managed server's major version; pg_dump refuses to dump a newer
+# server than itself.
+PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 
 mkdir -p "$BACKUP_DIR"
@@ -27,12 +34,21 @@ fi
 DB_NAME="${POSTGRES_DB:-geo_audit}"
 TARGET="${BACKUP_DIR}/${DB_NAME}-${STAMP}.sql.gz"
 
-echo "[$(date -u +%FT%TZ)] Backing up ${DB_NAME} -> ${TARGET}"
+# There is no local postgres container any more, so the dump runs from a
+# throwaway client container pointed at the managed host. The owner role is used
+# because the runtime role deliberately cannot read everything.
+: "${POSTGRES_HOST:?POSTGRES_HOST is required}"
+: "${POSTGRES_USER:?POSTGRES_USER is required}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+DUMP_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/${DB_NAME}?sslmode=${POSTGRES_SSLMODE:-require}"
+
+echo "[$(date -u +%FT%TZ)] Backing up ${DB_NAME} on ${POSTGRES_HOST} -> ${TARGET}"
 
 # --clean --if-exists makes the dump idempotent to restore over an existing DB.
-# -T disables the TTY so the stream is not corrupted by control characters.
-$COMPOSE exec -T postgres sh -c \
-  'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
+# The DSN goes in via the environment, never argv, so it cannot be read out of
+# `ps` by another user on the box.
+docker run --rm -i -e PGDSN="$DUMP_DSN" "$PG_IMAGE" \
+  sh -c 'pg_dump "$PGDSN" --clean --if-exists' \
   | gzip -9 > "$TARGET.partial"
 
 # Only publish the final name once the dump completed, so a half-written file

@@ -11,7 +11,7 @@ import pyotp
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.db.models.user import User
 
-ISSUER = "GEO Audit"
+ISSUER = "CheckGEO.ai"
 
 
 def generate_secret() -> str:

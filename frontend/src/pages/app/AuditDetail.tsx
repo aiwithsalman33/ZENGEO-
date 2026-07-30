@@ -54,7 +54,7 @@ export default function AuditDetail() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `geo-audit-${auditId?.slice(0, 8)}.pdf`
+      link.download = `checkgeo-${auditId?.slice(0, 8)}.pdf`
       link.click()
       URL.revokeObjectURL(url)
     },

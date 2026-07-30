@@ -72,7 +72,7 @@ def _band_colour(score: float | None) -> str:
 def _safe_filename(business_name: str, audit_id: uuid.UUID) -> str:
     """A download filename that cannot escape a directory or break a header."""
     slug = re.sub(r"[^A-Za-z0-9]+", "-", business_name).strip("-").lower()[:60]
-    return f"geo-audit-{slug or 'report'}-{str(audit_id)[:8]}.pdf"
+    return f"checkgeo-{slug or 'report'}-{str(audit_id)[:8]}.pdf"
 
 
 def build_context(audit: Audit) -> dict[str, Any]:

@@ -75,7 +75,7 @@ async def send_verification_email(*, to: str, name: str | None, token: str) -> b
     link = f"{settings.frontend_url.rstrip('/')}/verify-email?token={token}"
     return await send_email(
         to=to,
-        subject="Confirm your email — GEO Audit",
+        subject="Confirm your email — CheckGEO.ai",
         html=_render("verify_email.html", name=name or "there", link=link),
         text=(
             f"Hi {name or 'there'},\n\n"
@@ -91,7 +91,7 @@ async def send_password_reset_email(*, to: str, name: str | None, token: str) ->
     link = f"{settings.frontend_url.rstrip('/')}/reset-password?token={token}"
     return await send_email(
         to=to,
-        subject="Reset your password — GEO Audit",
+        subject="Reset your password — CheckGEO.ai",
         html=_render("reset_password.html", name=name or "there", link=link),
         text=(
             f"Hi {name or 'there'},\n\n"

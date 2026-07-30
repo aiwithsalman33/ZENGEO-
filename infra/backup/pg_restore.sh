@@ -12,6 +12,7 @@ cd "$(dirname "$0")/../.."
 
 DUMP="${1:-}"
 COMPOSE="${COMPOSE:-docker compose}"
+PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
 
 if [ -z "$DUMP" ]; then
   echo "Usage: $0 <path-to-dump.sql.gz>" >&2
@@ -31,7 +32,15 @@ if [ -f .env ]; then
   set -a; . ./.env; set +a
 fi
 
-echo "This will OVERWRITE the contents of database '${POSTGRES_DB:-geo_audit}'."
+: "${POSTGRES_HOST:?POSTGRES_HOST is required}"
+: "${POSTGRES_USER:?POSTGRES_USER is required}"
+: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+DB_NAME="${POSTGRES_DB:-geo_audit}"
+RESTORE_DSN="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT:-5432}/${DB_NAME}?sslmode=${POSTGRES_SSLMODE:-require}"
+
+# The target is a managed instance now, so name it plainly - the whole point of
+# the confirmation is that you read which host you are about to overwrite.
+echo "This will OVERWRITE database '${DB_NAME}' on host '${POSTGRES_HOST}'."
 echo "Restoring from: $DUMP"
 printf "Type 'restore' to continue: "
 read -r CONFIRM
@@ -42,8 +51,8 @@ echo "Stopping backend and worker…"
 $COMPOSE stop backend worker
 
 echo "Restoring…"
-gzip -dc "$DUMP" | $COMPOSE exec -T postgres sh -c \
-  'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+gzip -dc "$DUMP" | docker run --rm -i -e PGDSN="$RESTORE_DSN" "$PG_IMAGE" \
+  sh -c 'psql -v ON_ERROR_STOP=1 "$PGDSN"'
 
 echo "Bringing services back up…"
 $COMPOSE start backend worker

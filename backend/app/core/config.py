@@ -10,7 +10,7 @@ import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "production"]
@@ -18,6 +18,13 @@ Environment = Literal["development", "test", "production"]
 _RATE_LIMIT_RE = re.compile(r"^\s*(\d+)\s*/\s*(\d*)\s*(second|minute|hour|day)s?\s*$")
 
 _WINDOW_SECONDS = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
+
+# A DSN asks for TLS via asyncpg's `ssl=` or libpq's `sslmode=`; anything that
+# disables or merely prefers it does not count as encrypted.
+_URL_IS_TLS_RE = re.compile(
+    r"[?&]ssl(?:mode)?=(?!disable|allow|prefer)(require|verify-ca|verify-full|true|on)",
+    re.IGNORECASE,
+)
 
 
 def parse_rate_limit(spec: str) -> tuple[int, int]:
@@ -31,12 +38,34 @@ def parse_rate_limit(spec: str) -> tuple[int, int]:
     return int(limit), int(multiple or 1) * _WINDOW_SECONDS[unit]
 
 
+def _require_expanded(value: str, name: str) -> str:
+    """Fail loudly on a DSN whose ``${...}`` references were never expanded.
+
+    The documented `.env` composes DATABASE_URL out of the other variables.
+    Docker Compose expands those references when it loads the file, but a plain
+    dotenv reader - pydantic-settings when the app runs outside Compose, pytest,
+    a one-off `alembic` invocation - does not, and would otherwise try to
+    connect to a host literally named "${POSTGRES_HOST}".
+    """
+    if "${" in value:
+        raise ValueError(
+            f"{name} still contains an unexpanded ${{...}} reference. Either run "
+            f"under Docker Compose (which expands them) or write {name} out with "
+            f"literal values."
+        )
+    return value
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
+        # The DSN fields carry a validation_alias so DATABASE_URL maps onto
+        # them. Without this, that alias becomes the *only* way to set them and
+        # the field name silently stops working.
+        populate_by_name=True,
     )
 
     # --- Core ---
@@ -49,15 +78,32 @@ class Settings(BaseSettings):
     jwt_secret_key: SecretStr = SecretStr("insecure-development-secret-change-me")
     encryption_key: SecretStr = SecretStr("")
 
-    # --- Database ---
+    # --- Database (an external / managed Postgres, not a container we run) ---
     postgres_user: str = "geo_app"
     postgres_password: SecretStr = SecretStr("postgres")
     postgres_db: str = "geo_audit"
     postgres_host: str = "postgres"
     postgres_port: int = 5432
+    # TLS to the managed instance. "require" encrypts but does not verify the
+    # server; "verify-full" also checks the certificate chain and hostname and
+    # needs POSTGRES_SSLROOTCERT. "disable" exists only for the throwaway local
+    # dev container and is refused in production.
+    postgres_sslmode: str = "require"
+    postgres_sslrootcert: str | None = None
     app_db_user: str | None = None
     app_db_password: SecretStr | None = None
-    database_url_override: str | None = None
+
+    # Fully-formed DSNs win over the components above when set. DATABASE_URL is
+    # the runtime (least-privilege) connection; MIGRATIONS_DATABASE_URL is the
+    # owner connection Alembic uses.
+    database_url_override: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("DATABASE_URL", "DATABASE_URL_OVERRIDE"),
+    )
+    migrations_database_url_override: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("MIGRATIONS_DATABASE_URL", "MIGRATION_DATABASE_URL"),
+    )
 
     # --- Redis ---
     redis_url: str = "redis://redis:6379/0"
@@ -84,7 +130,7 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: SecretStr = SecretStr("")
     smtp_starttls: bool = True
-    smtp_from: str = "GEO Audit <no-reply@example.com>"
+    smtp_from: str = "CheckGEO.ai <no-reply@example.com>"
 
     # --- Audit engine ---
     reports_dir: str = "/data/reports"
@@ -128,19 +174,40 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "production"
 
+    def _tls_query(self, driver: str) -> str:
+        """TLS query string, spelled the way each driver expects.
+
+        asyncpg takes ``ssl=``; libpq-based psycopg takes ``sslmode=``. Same
+        intent, different parameter name - getting this wrong silently connects
+        in cleartext, so the two are kept apart deliberately.
+        """
+        from urllib.parse import quote_plus
+
+        mode = self.postgres_sslmode.strip().lower()
+        if mode in {"", "disable"}:
+            return ""
+        key = "ssl" if driver == "asyncpg" else "sslmode"
+        query = f"?{key}={quote_plus(mode)}"
+        # Only libpq understands sslrootcert in the DSN; for asyncpg the CA is
+        # supplied through an SSL context, so we leave the URL alone.
+        if self.postgres_sslrootcert and driver != "asyncpg":
+            query += f"&sslrootcert={quote_plus(self.postgres_sslrootcert)}"
+        return query
+
     def _dsn(self, user: str, password: str, driver: str) -> str:
         from urllib.parse import quote_plus
 
         return (
             f"postgresql+{driver}://{quote_plus(user)}:{quote_plus(password)}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            f"{self._tls_query(driver)}"
         )
 
     @property
     def database_url(self) -> str:
         """Async DSN used by the API and worker (least-privilege runtime role)."""
         if self.database_url_override:
-            return self.database_url_override
+            return _require_expanded(self.database_url_override, "DATABASE_URL")
         if self.app_db_user and self.app_db_password:
             return self._dsn(
                 self.app_db_user, self.app_db_password.get_secret_value(), "asyncpg"
@@ -152,6 +219,10 @@ class Settings(BaseSettings):
     @property
     def migration_database_url(self) -> str:
         """Sync DSN used by Alembic - runs as the schema owner, not the app role."""
+        if self.migrations_database_url_override:
+            return _require_expanded(
+                self.migrations_database_url_override, "MIGRATIONS_DATABASE_URL"
+            )
         return self._dsn(
             self.postgres_user, self.postgres_password.get_secret_value(), "psycopg"
         )
@@ -175,6 +246,22 @@ class Settings(BaseSettings):
             )
         if self.frontend_url.startswith("http://"):
             problems.append("FRONTEND_URL must use https in production")
+        # The database is now off-box, so the hop to it crosses a network the
+        # VPS does not control. Cleartext there would expose every row.
+        if self.postgres_sslmode.strip().lower() in {"", "disable", "allow", "prefer"}:
+            problems.append(
+                "POSTGRES_SSLMODE must be 'require' or stricter in production - the "
+                "managed database is reached over an untrusted network"
+            )
+        for name, url in (
+            ("DATABASE_URL", self.database_url_override),
+            ("MIGRATIONS_DATABASE_URL", self.migrations_database_url_override),
+        ):
+            if url and not _URL_IS_TLS_RE.search(url):
+                problems.append(
+                    f"{name} is set but requests no TLS; add '?ssl=require' (asyncpg) "
+                    f"or '?sslmode=require' (psycopg)"
+                )
         return problems
 
 

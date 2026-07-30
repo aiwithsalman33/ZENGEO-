@@ -28,6 +28,42 @@ window.ResizeObserver = class {
   disconnect() {}
 }
 
+// jsdom has no IntersectionObserver, which the scroll-reveal animations and the
+// sticky-nav sentinel both rely on. It reports everything as visible the moment
+// it is observed, so `whileInView` content settles in its final state and is
+// assertable - tests should see the page a reader ends up with, not a frame of
+// it mid-animation.
+window.IntersectionObserver = class implements IntersectionObserver {
+  readonly root = null
+  readonly rootMargin = ''
+  readonly thresholds: readonly number[] = []
+
+  constructor(private readonly callback: IntersectionObserverCallback) {}
+
+  observe(target: Element) {
+    this.callback(
+      [
+        {
+          isIntersecting: true,
+          intersectionRatio: 1,
+          target,
+          time: 0,
+          boundingClientRect: target.getBoundingClientRect(),
+          intersectionRect: target.getBoundingClientRect(),
+          rootBounds: null,
+        } as IntersectionObserverEntry,
+      ],
+      this,
+    )
+  }
+
+  unobserve() {}
+  disconnect() {}
+  takeRecords(): IntersectionObserverEntry[] {
+    return []
+  }
+}
+
 // Radix uses these for pointer-based interactions; jsdom lacks them.
 if (!Element.prototype.hasPointerCapture) {
   Element.prototype.hasPointerCapture = () => false

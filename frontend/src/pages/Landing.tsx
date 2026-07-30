@@ -1,6 +1,5 @@
 import {
   ArrowRight,
-  BadgeCheck,
   BookOpenText,
   Bot,
   Check,
@@ -17,15 +16,21 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { useState } from 'react'
+import { motion, useReducedMotion } from 'motion/react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { AssistantMarquee } from '@/components/landing/AssistantMarquee'
+import { PreviewStats, ScorePreview } from '@/components/landing/ScorePreview'
+import { StepsToScore } from '@/components/landing/StepsToScore'
 import { Logo } from '@/components/Logo'
+import { Reveal, Stagger, StaggerItem } from '@/components/motion/Reveal'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { useAuth } from '@/lib/auth'
 import { PILLARS } from '@/lib/geo'
+import { cn } from '@/lib/utils'
 
 const PILLAR_ICONS: Record<string, typeof Bot> = {
   crawlability: Bot,
@@ -37,7 +42,7 @@ const PILLAR_ICONS: Record<string, typeof Bot> = {
   share_of_voice: Radar,
 }
 
-const STEPS = [
+const METHOD = [
   {
     title: 'Describe your business',
     body: 'A short guided form: who you are, what you sell, who you compete with, and the questions your customers would actually type into an AI assistant.',
@@ -79,7 +84,36 @@ const FAQ = [
   },
 ]
 
-function Nav() {
+/**
+ * True once the observed element has scrolled off the top of the viewport.
+ *
+ * An IntersectionObserver on a sentinel rather than a scroll listener: the
+ * browser does the work off the main thread and calls back only on the one
+ * transition we care about, instead of on every scroll frame.
+ */
+function useScrolledPast<T extends HTMLElement>() {
+  const ref = useRef<T>(null)
+  const [passed, setPassed] = useState(false)
+
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return
+        setPassed(!entry.isIntersecting && entry.boundingClientRect.top <= 0)
+      },
+      { threshold: 0 },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
+
+  return [ref, passed] as const
+}
+
+function Nav({ solid }: { solid: boolean }) {
   const { isAuthenticated, isAdmin } = useAuth()
   const [open, setOpen] = useState(false)
   const appHref = isAdmin ? '/admin' : '/app'
@@ -92,7 +126,17 @@ function Nav() {
   ]
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur-md">
+    <header
+      className={cn(
+        'sticky top-0 z-40 transition-[background-color,border-color,backdrop-filter,box-shadow] duration-300',
+        // Over the hero the bar is invisible and the mesh shows through; once
+        // real content would slide under it, it takes on a surface so the links
+        // stay legible against whatever is passing behind.
+        solid || open
+          ? 'border-b border-border/70 bg-background/80 shadow-sm backdrop-blur-md'
+          : 'border-b border-transparent bg-transparent',
+      )}
+    >
       <nav
         className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6"
         aria-label="Main"
@@ -116,7 +160,7 @@ function Nav() {
         <div className="flex items-center gap-2">
           <ThemeToggle className="hidden sm:inline-flex" />
           {isAuthenticated ? (
-            <Button asChild size="sm">
+            <Button asChild size="sm" className="cta-glow">
               <Link to={appHref}>
                 Open dashboard <ArrowRight aria-hidden="true" />
               </Link>
@@ -126,7 +170,7 @@ function Nav() {
               <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
                 <Link to="/login">Sign in</Link>
               </Button>
-              <Button asChild size="sm">
+              <Button asChild size="sm" className="cta-glow">
                 <Link to="/signup">Start free audit</Link>
               </Button>
             </>
@@ -174,137 +218,97 @@ function Nav() {
   )
 }
 
-function Hero() {
+/** Drifting colour fields behind the hero. Purely decorative. */
+function HeroMesh() {
   return (
-    <section className="glow-surface relative overflow-hidden border-b border-border">
-      <div className="mx-auto max-w-6xl px-6 py-20 sm:py-28">
-        <div className="mx-auto max-w-3xl text-center">
-          <Badge variant="outline" className="mb-6 gap-1.5 py-1 pl-1.5 pr-3">
-            <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-              Free
-            </span>
-            Bring your own API key — no usage caps
-          </Badge>
-
-          <h1 className="text-balance text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl md:text-6xl">
-            When an AI answers your customer&apos;s question,
-            <span className="bg-gradient-to-r from-primary to-purple-400 bg-clip-text text-transparent">
-              {' '}
-              is it citing you?
-            </span>
-          </h1>
-
-          <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
-            Search is moving inside ChatGPT, Claude, Perplexity and Gemini — where there is no
-            page two, only the sources the model chose to trust. This audit scores how visible
-            and citable your business is to those models, and tells you exactly what to fix.
-          </p>
-
-          <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button asChild size="lg" className="w-full sm:w-auto">
-              <Link to="/signup">
-                Run your free audit <ArrowRight aria-hidden="true" />
-              </Link>
-            </Button>
-            <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
-              <a href="#pillars">See what we measure</a>
-            </Button>
-          </div>
-
-          <p className="mt-4 text-xs text-muted-foreground">
-            No credit card. No sales call. Your keys stay yours.
-          </p>
-        </div>
-
-        <div className="mx-auto mt-16 max-w-4xl">
-          <ScorePreview />
-        </div>
-      </div>
-    </section>
+    <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden="true">
+      <div
+        className="mesh-blob animate-blob-drift-a -left-24 -top-32 size-[38rem]"
+        style={{ background: 'radial-gradient(circle, hsl(var(--primary) / 0.5), transparent 70%)' }}
+      />
+      <div
+        className="mesh-blob animate-blob-drift-b -right-32 -top-16 size-[34rem]"
+        style={{ background: 'radial-gradient(circle, hsl(276 76% 62% / 0.42), transparent 70%)' }}
+      />
+      <div
+        className="mesh-blob animate-blob-drift-b bottom-[-14rem] left-1/3 size-[30rem] [animation-delay:-8s]"
+        style={{ background: 'radial-gradient(circle, hsl(200 85% 58% / 0.32), transparent 70%)' }}
+      />
+    </div>
   )
 }
 
-/** Static illustration of the report — no data, purely to set expectations. */
-function ScorePreview() {
-  const sample = [
-    { label: 'Crawlability', value: 88 },
-    { label: 'llms.txt', value: 20 },
-    { label: 'Schema', value: 64 },
-    { label: 'Extractability', value: 72 },
-    { label: 'Evidence', value: 45 },
-    { label: 'Authority', value: 58 },
-    { label: 'Share of Voice', value: 33 },
-  ]
+function Hero() {
+  const reduced = useReducedMotion()
 
   return (
-    <Card className="overflow-hidden shadow-xl">
-      <div className="flex items-center gap-1.5 border-b border-border bg-muted/40 px-4 py-2.5">
-        <span className="size-2.5 rounded-full bg-destructive/60" />
-        <span className="size-2.5 rounded-full bg-warning/60" />
-        <span className="size-2.5 rounded-full bg-success/60" />
-        <span className="ml-3 text-xs text-muted-foreground">Example report</span>
-      </div>
-      <CardContent className="grid gap-8 p-6 sm:grid-cols-[auto,1fr] sm:p-8">
-        <div className="flex flex-col items-center justify-center gap-1 sm:border-r sm:border-border sm:pr-8">
-          <div className="relative">
-            <svg viewBox="0 0 120 120" className="size-32 -rotate-90" aria-hidden="true">
-              <circle
-                cx="60"
-                cy="60"
-                r="52"
-                fill="none"
-                stroke="hsl(var(--muted))"
-                strokeWidth="10"
-              />
-              <circle
-                cx="60"
-                cy="60"
-                r="52"
-                fill="none"
-                stroke="hsl(var(--band-fair))"
-                strokeWidth="10"
-                strokeLinecap="round"
-                strokeDasharray={`${2 * Math.PI * 52 * 0.57} ${2 * Math.PI * 52}`}
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-3xl font-semibold tabular-nums">57</span>
-              <span className="text-[11px] text-muted-foreground">/ 100</span>
-            </div>
-          </div>
-          <Badge variant="warning" className="mt-2">
-            Needs Work
-          </Badge>
-        </div>
+    // `isolate` keeps the mesh's negative z-index inside this section - without
+    // its own stacking context the blobs slide behind the page background and
+    // disappear entirely.
+    <section className="relative isolate overflow-hidden border-b border-border">
+      <HeroMesh />
+      <div className="mx-auto max-w-6xl px-6 py-24 sm:py-32">
+        <Stagger trigger="mount" className="mx-auto max-w-3xl text-center">
+          <StaggerItem>
+            <Badge variant="outline" className="mb-6 gap-1.5 py-1 pl-1.5 pr-3">
+              <span className="rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                Free
+              </span>
+              Bring your own API key — no usage caps
+            </Badge>
+          </StaggerItem>
 
-        <ul className="space-y-2.5">
-          {sample.map((row) => (
-            <li key={row.label} className="grid grid-cols-[7.5rem,1fr,2.5rem] items-center gap-3">
-              <span className="truncate text-xs text-muted-foreground">{row.label}</span>
-              <span className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <span
-                  className="block h-full rounded-full"
-                  style={{
-                    width: `${row.value}%`,
-                    backgroundColor:
-                      row.value >= 80
-                        ? 'hsl(var(--band-excellent))'
-                        : row.value >= 60
-                          ? 'hsl(var(--band-good))'
-                          : row.value >= 40
-                            ? 'hsl(var(--band-fair))'
-                            : 'hsl(var(--band-poor))',
-                  }}
-                />
+          <StaggerItem>
+            <h1 className="text-balance text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl md:text-6xl">
+              When an AI answers your customer&apos;s question,
+              <span className="bg-gradient-to-r from-primary to-purple-400 bg-clip-text text-transparent">
+                {' '}
+                is it citing you?
               </span>
-              <span className="text-right text-xs tabular-nums text-muted-foreground">
-                {row.value}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </CardContent>
-    </Card>
+            </h1>
+          </StaggerItem>
+
+          <StaggerItem>
+            <p className="mx-auto mt-6 max-w-2xl text-pretty text-lg leading-relaxed text-muted-foreground">
+              Search is moving inside ChatGPT, Claude, Perplexity and Gemini — where there is no
+              page two, only the sources the model chose to trust. CheckGEO.ai scores how visible
+              and citable your business is to those models, and tells you exactly what to fix.
+            </p>
+          </StaggerItem>
+
+          <StaggerItem>
+            <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <Button asChild size="lg" className="cta-glow w-full sm:w-auto">
+                <Link to="/signup">
+                  Run your free audit <ArrowRight aria-hidden="true" />
+                </Link>
+              </Button>
+              <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
+                <a href="#pillars">See what we measure</a>
+              </Button>
+            </div>
+          </StaggerItem>
+
+          <StaggerItem>
+            <p className="mt-4 text-xs text-muted-foreground">
+              No credit card. No sales call. Your keys stay yours.
+            </p>
+          </StaggerItem>
+        </Stagger>
+
+        {/* The mock lifts in slightly after the copy, so the eye reads the
+            headline first and finds the product already there when it arrives. */}
+        <motion.div
+          className="mx-auto mt-16 max-w-4xl"
+          initial={reduced ? false : { opacity: 0, y: 28 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={reduced ? { duration: 0 } : { duration: 0.7, delay: 0.45, ease: [0.22, 1, 0.36, 1] }}
+        >
+          <ScorePreview />
+          <PreviewStats />
+        </motion.div>
+      </div>
+    </section>
   )
 }
 
@@ -312,7 +316,7 @@ function HowItWorks() {
   return (
     <section id="how" className="border-b border-border py-20 sm:py-24">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="max-w-2xl">
+        <Reveal className="max-w-2xl">
           <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Four steps, one honest number
           </h2>
@@ -320,12 +324,12 @@ function HowItWorks() {
             No black box. Every point in your score traces back to a specific check you can
             reproduce yourself.
           </p>
-        </div>
+        </Reveal>
 
-        <ol className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-          {STEPS.map((step, index) => (
-            <li key={step.title}>
-              <Card className="h-full transition-colors hover:border-primary/40">
+        <Stagger className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          {METHOD.map((step, index) => (
+            <StaggerItem key={step.title}>
+              <Card className="card-lift h-full">
                 <CardContent className="space-y-3 p-5">
                   <span className="inline-flex size-8 items-center justify-center rounded-lg bg-primary/12 text-sm font-semibold text-primary">
                     {index + 1}
@@ -334,9 +338,9 @@ function HowItWorks() {
                   <p className="text-sm leading-relaxed text-muted-foreground">{step.body}</p>
                 </CardContent>
               </Card>
-            </li>
+            </StaggerItem>
           ))}
-        </ol>
+        </Stagger>
       </div>
     </section>
   )
@@ -346,7 +350,7 @@ function Pillars() {
   return (
     <section id="pillars" className="border-b border-border bg-muted/25 py-20 sm:py-24">
       <div className="mx-auto max-w-6xl px-6">
-        <div className="max-w-2xl">
+        <Reveal className="max-w-2xl">
           <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Seven weighted pillars
           </h2>
@@ -354,51 +358,55 @@ function Pillars() {
             Each pillar is scored 0–100 on its own, then combined by weight into your composite
             GEO score. You always see the sub-scores, so you know which lever to pull.
           </p>
-        </div>
+        </Reveal>
 
-        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Stagger className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {PILLARS.map((pillar) => {
             const Icon = PILLAR_ICONS[pillar.key] ?? Gauge
             return (
-              <Card key={pillar.key} className="h-full">
-                <CardContent className="space-y-3 p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="inline-flex size-9 items-center justify-center rounded-lg bg-primary/12 text-primary">
-                      <Icon className="size-4.5" aria-hidden="true" />
-                    </span>
-                    <Badge variant="secondary" className="tabular-nums">
-                      {Math.round(pillar.weight * 100)}%
-                    </Badge>
-                  </div>
-                  <h3 className="font-medium leading-snug">{pillar.name}</h3>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    {pillar.description}
-                  </p>
-                </CardContent>
-              </Card>
+              <StaggerItem key={pillar.key}>
+                <Card className="card-lift h-full">
+                  <CardContent className="space-y-3 p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="inline-flex size-9 items-center justify-center rounded-lg bg-primary/12 text-primary">
+                        <Icon className="size-4.5" aria-hidden="true" />
+                      </span>
+                      <Badge variant="secondary" className="tabular-nums">
+                        {Math.round(pillar.weight * 100)}%
+                      </Badge>
+                    </div>
+                    <h3 className="font-medium leading-snug">{pillar.name}</h3>
+                    <p className="text-sm leading-relaxed text-muted-foreground">
+                      {pillar.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              </StaggerItem>
             )
           })}
 
-          <Card className="h-full border-dashed bg-transparent">
-            <CardContent className="flex h-full flex-col justify-center gap-2 p-5">
-              <h3 className="font-medium leading-snug">Bands</h3>
-              <ul className="space-y-1.5 text-sm text-muted-foreground">
-                <li className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-band-poor" /> 0–39 Poor
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-band-fair" /> 40–59 Needs Work
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-band-good" /> 60–79 Good
-                </li>
-                <li className="flex items-center gap-2">
-                  <span className="size-2 rounded-full bg-band-excellent" /> 80–100 Excellent
-                </li>
-              </ul>
-            </CardContent>
-          </Card>
-        </div>
+          <StaggerItem>
+            <Card className="h-full border-dashed bg-transparent">
+              <CardContent className="flex h-full flex-col justify-center gap-2 p-5">
+                <h3 className="font-medium leading-snug">Bands</h3>
+                <ul className="space-y-1.5 text-sm text-muted-foreground">
+                  <li className="flex items-center gap-2">
+                    <span className="size-2 rounded-full bg-band-poor" /> 0–39 Poor
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="size-2 rounded-full bg-band-fair" /> 40–59 Needs Work
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="size-2 rounded-full bg-band-good" /> 60–79 Good
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <span className="size-2 rounded-full bg-band-excellent" /> 80–100 Excellent
+                  </li>
+                </ul>
+              </CardContent>
+            </Card>
+          </StaggerItem>
+        </Stagger>
       </div>
     </section>
   )
@@ -431,7 +439,7 @@ function Byok() {
   return (
     <section id="byok" className="border-b border-border py-20 sm:py-24">
       <div className="mx-auto grid max-w-6xl items-center gap-12 px-6 lg:grid-cols-2">
-        <div>
+        <Reveal>
           <Badge variant="outline" className="mb-4">
             Bring your own key
           </Badge>
@@ -451,21 +459,21 @@ function Byok() {
               </Badge>
             ))}
           </div>
-        </div>
+        </Reveal>
 
-        <ul className="grid gap-4 sm:grid-cols-2">
+        <Stagger className="grid gap-4 sm:grid-cols-2">
           {points.map((point) => (
-            <li key={point.title}>
-              <Card className="h-full">
+            <StaggerItem key={point.title}>
+              <Card className="card-lift h-full">
                 <CardContent className="space-y-2 p-5">
                   <point.icon className="size-4.5 text-primary" aria-hidden="true" />
                   <h3 className="text-sm font-medium">{point.title}</h3>
                   <p className="text-sm leading-relaxed text-muted-foreground">{point.body}</p>
                 </CardContent>
               </Card>
-            </li>
+            </StaggerItem>
           ))}
-        </ul>
+        </Stagger>
       </div>
     </section>
   )
@@ -475,37 +483,17 @@ function Faq() {
   return (
     <section id="faq" className="border-b border-border bg-muted/25 py-20 sm:py-24">
       <div className="mx-auto max-w-3xl px-6">
-        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Questions</h2>
+        <Reveal>
+          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Questions</h2>
+        </Reveal>
         <dl className="mt-10 space-y-8">
-          {FAQ.map((item) => (
-            <div key={item.q}>
+          {FAQ.map((item, index) => (
+            <Reveal key={item.q} delay={index * 0.04}>
               <dt className="font-medium leading-snug">{item.q}</dt>
               <dd className="mt-2 text-pretty leading-relaxed text-muted-foreground">{item.a}</dd>
-            </div>
+            </Reveal>
           ))}
         </dl>
-      </div>
-    </section>
-  )
-}
-
-function FinalCta() {
-  return (
-    <section className="glow-surface py-20 sm:py-24">
-      <div className="mx-auto max-w-3xl px-6 text-center">
-        <BadgeCheck className="mx-auto size-9 text-primary" aria-hidden="true" />
-        <h2 className="mt-5 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-          Find out what the assistants say about you
-        </h2>
-        <p className="mx-auto mt-4 max-w-xl text-pretty text-muted-foreground">
-          One form, one scan, one prioritised list of fixes. Most sites discover at least one
-          quick win in the first five minutes.
-        </p>
-        <Button asChild size="lg" className="mt-8">
-          <Link to="/signup">
-            Start your free audit <ArrowRight aria-hidden="true" />
-          </Link>
-        </Button>
       </div>
     </section>
   )
@@ -533,22 +521,27 @@ function Footer() {
 }
 
 export default function Landing() {
+  const [sentinelRef, pastHero] = useScrolledPast<HTMLDivElement>()
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background font-landing">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground"
       >
         Skip to content
       </a>
-      <Nav />
+      <Nav solid={pastHero} />
       <main id="main">
         <Hero />
+        {/* Sits on the hero's bottom edge; the nav solidifies once it goes by. */}
+        <div ref={sentinelRef} aria-hidden="true" className="h-px" />
+        <AssistantMarquee />
         <HowItWorks />
         <Pillars />
         <Byok />
+        <StepsToScore />
         <Faq />
-        <FinalCta />
       </main>
       <Footer />
     </div>

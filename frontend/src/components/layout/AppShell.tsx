@@ -79,7 +79,10 @@ export function AppShell({
   )
 
   return (
-    <div className="flex min-h-screen bg-background">
+    // Explicit `font-app` even though it is the inherited default - the shell is
+    // the boundary of the authenticated product, and stating it here keeps the
+    // landing font from ever leaking in through a shared ancestor.
+    <div className="flex min-h-screen bg-background font-app">
       <a
         href="#content"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground"

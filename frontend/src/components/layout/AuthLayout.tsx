@@ -15,7 +15,9 @@ export function AuthLayout({
   footer?: ReactNode
 }) {
   return (
-    <div className="glow-surface flex min-h-screen flex-col bg-background">
+    // Sign-in and sign-up sit on the marketing side of the funnel and are seen
+    // back-to-back with the landing page, so they wear the landing font.
+    <div className="glow-surface flex min-h-screen flex-col bg-background font-landing">
       <header className="flex items-center justify-between px-6 py-5">
         <Link to="/" className="rounded-md focus-visible:ring-2 focus-visible:ring-ring">
           <Logo />

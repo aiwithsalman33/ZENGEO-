@@ -28,7 +28,7 @@ export function Logo({ className, showText = true }: { className?: string; showT
       <LogoMark />
       {showText && (
         <span className="text-[15px] font-semibold tracking-tight">
-          GEO<span className="text-muted-foreground"> Audit</span>
+          CheckGEO<span className="text-muted-foreground">.ai</span>
         </span>
       )}
     </span>

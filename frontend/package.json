@@ -14,6 +14,8 @@
     "audit:check": "node scripts/audit-gate.mjs --audit-level=high"
   },
   "dependencies": {
+    "@fontsource/open-sans": "^5.3.0",
+    "@fontsource/poppins": "^5.3.0",
     "@hookform/resolvers": "3.10.0",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -34,6 +36,7 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "lucide-react": "0.469.0",
+    "motion": "^12.43.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-hook-form": "7.54.2",

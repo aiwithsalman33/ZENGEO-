@@ -36,7 +36,7 @@ export default function Reports() {
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `geo-audit-${audit.business_name.replace(/\W+/g, '-').toLowerCase()}.pdf`
+      link.download = `checkgeo-${audit.business_name.replace(/\W+/g, '-').toLowerCase()}.pdf`
       link.click()
       URL.revokeObjectURL(url)
     },

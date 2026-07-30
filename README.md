@@ -1,4 +1,4 @@
-# GEO Audit
+# CheckGEO.ai
 
 A self-hosted web app that scores how visible and citable a business is inside
 AI-generated answers — ChatGPT, Claude, Perplexity — and produces a report with
@@ -13,6 +13,7 @@ free and keeps anyone from imposing a limit on how much a user tests.
 ## Contents
 
 - [What it measures](#what-it-measures)
+- [Database](#database)
 - [Quick start (local)](#quick-start-local)
 - [First admin](#first-admin)
 - [Connecting an AI provider key](#connecting-an-ai-provider-key)
@@ -49,13 +50,82 @@ rather than being silently capped at 85. The report says so explicitly.
 
 ---
 
+## Database
+
+**Postgres is external.** There is no `postgres` service in `docker-compose.yml`
+or in the production overlay — the app connects to a managed instance over TLS.
+Redis stays local in Docker, because it holds only rate-limit counters and the
+Celery queue: nothing whose loss needs to outlive a restart.
+
+Local development is the one exception. `docker-compose.override.yml` — which
+plain `docker compose up` applies automatically — adds a throwaway Postgres
+container so contributors never point a dev environment at the production
+database. Production passes `-f` flags explicitly and never loads that file.
+
+### Two roles, least privilege
+
+| Role | Env vars | Used by | Rights |
+|---|---|---|---|
+| Owner | `POSTGRES_USER` / `POSTGRES_PASSWORD` | Alembic migrations, the one-time bootstrap, `pg_dump` | Owns the schema |
+| Runtime | `APP_DB_USER` / `APP_DB_PASSWORD` | The API and the worker | `SELECT/INSERT/UPDATE/DELETE` only — no DDL |
+
+The split means a SQL-injection foothold in the application cannot reshape the
+schema. You can confirm it holds at any time:
+
+```bash
+# As the runtime role: reads work, DDL does not.
+psql "$DATABASE_URL_LIBPQ" -c 'create table nope(id int)'
+# ERROR:  permission denied for schema public
+```
+
+### First deploy: create the runtime role by hand
+
+Managed providers do not run `docker-entrypoint-initdb.d`, so this is a
+deliberate one-time manual step rather than something that happens on boot. Run
+it once, connected as the owner, before the first `alembic upgrade head`:
+
+```bash
+make db-bootstrap          # or: .\geo.ps1 db-bootstrap
+```
+
+Either wrapper runs [`infra/postgres/bootstrap/10-roles.sql`](infra/postgres/bootstrap/10-roles.sql)
+through `psql`. To run it directly instead:
+
+```bash
+psql "$MIGRATIONS_DATABASE_URL" \
+     -v app_user="$APP_DB_USER" \
+     -v app_password="$APP_DB_PASSWORD" \
+     -f infra/postgres/bootstrap/10-roles.sql
+```
+
+It is idempotent — re-running it resets the runtime role's password and
+re-applies the grants. It creates the `citext` extension too, which
+`users.email` needs; if your provider gates extensions, allowlist `citext`
+first. The local dev container runs the very same file on first boot, so dev and
+production privileges cannot drift apart.
+
+### TLS
+
+The hop to a managed database leaves the VPS, so it must be encrypted.
+`POSTGRES_SSLMODE=require` is the minimum and the app **refuses to start in
+production** with anything weaker. Prefer `verify-full` with
+`POSTGRES_SSLROOTCERT` pointing at your provider's CA bundle when one is
+published — `require` encrypts the connection but does not prove who is on the
+other end of it.
+
+Note the two spellings if you set the DSNs explicitly: asyncpg wants `?ssl=`,
+libpq-based psycopg wants `?sslmode=`. Getting this wrong connects in cleartext
+rather than failing, which is why the production check inspects both.
+
+---
+
 ## Quick start (local)
 
 Requirements: Docker and Docker Compose. Nothing else.
 
 ```bash
-git clone <your-repo-url> geo-audit
-cd geo-audit
+git clone <your-repo-url> checkgeo
+cd checkgeo
 ```
 
 **1. Create `.env` with generated secrets.**
@@ -80,6 +150,11 @@ Three secrets must be unique per environment:
 > the old one in `ENCRYPTION_KEY_FALLBACKS` (comma-separated) so existing
 > records still decrypt while they are re-saved.
 
+Leave `DATABASE_URL` and `MIGRATIONS_DATABASE_URL` commented out for local work.
+The dev override redirects `POSTGRES_HOST` at the throwaway container and turns
+TLS off, and it can only do that if the DSN is being built from the components
+rather than handed over whole.
+
 **2. Start everything.**
 
 ```bash
@@ -97,9 +172,12 @@ docker compose exec backend alembic upgrade head    # make migrate
 The API docs are at <http://localhost:8080/docs> in development (disabled
 automatically when `ENVIRONMENT=production`).
 
-Local development runs everything behind Caddy on one origin, which matters:
-the refresh cookie is `SameSite=Strict` and path-scoped, so hitting the Vite
-dev server on `:5173` directly means sessions will not survive a reload.
+**Use `:8080`, not `:5173`.** Caddy puts the SPA and the API on one origin,
+which the auth design depends on: the refresh cookie is `SameSite=Strict` and
+path-scoped, so a session opened against the bare Vite dev server will not
+survive a reload. The dev server does proxy `/api` and `/health` through to the
+backend, so `:5173` is not a dead end if you land on it — but `:8080` is the
+supported entry point.
 
 ---
 
@@ -152,34 +230,41 @@ a usage restriction.
 
 ## Deploying to a VPS
 
-Designed for one box running Docker Compose. No managed services required.
+One box running Docker Compose, plus a managed Postgres instance the box
+connects out to.
 
 ### Sizing
 
 | Users | vCPU | RAM | Disk |
 |---|---|---|---|
-| Evaluation / single team | 2 | 4 GB | 20 GB |
-| Small production (tens of users) | 4 | 8 GB | 40 GB |
-| Busy (many concurrent audits) | 4–8 | 16 GB | 80 GB+ |
+| Evaluation / single team | 2 | 2 GB | 20 GB |
+| Small production (tens of users) | 2–4 | 4 GB | 40 GB |
+| Busy (many concurrent audits) | 4–8 | 8 GB | 80 GB+ |
 
-**RAM is the binding constraint.** Postgres, Redis, the API and the frontend are
-modest; the worker is not — WeasyPrint holds a whole document in memory, and
-Argon2id is deliberately memory-hard at 64 MiB per password verification. Below
-4 GB the worker is the first thing the OOM killer takes.
+**RAM is the binding constraint**, and it is the worker that eats it — WeasyPrint
+holds a whole document in memory, and Argon2id is deliberately memory-hard at
+64 MiB per password verification. Redis, the API and the frontend are modest.
+These figures are roughly half what they were when Postgres lived on the same
+box; size the database separately at your provider.
 
-Disk grows with stored PDF reports (~50–150 KB each) and Postgres.
+Disk now grows mainly with stored PDF reports (~50–150 KB each), since the
+database no longer sits on this volume.
 
 ### First deploy
 
 ```bash
 # On the VPS
-git clone <your-repo-url> /opt/geo-audit
-cd /opt/geo-audit
+git clone <your-repo-url> /opt/checkgeo
+cd /opt/checkgeo
 
 cp .env.example .env
 # Edit .env: set ENVIRONMENT=production, PUBLIC_DOMAIN, ACME_EMAIL,
 # FRONTEND_URL=https://your-domain, CORS_ORIGINS=https://your-domain,
+# the managed POSTGRES_* values with POSTGRES_SSLMODE=require,
 # and freshly generated secrets.
+
+# ONE TIME: create the least-privilege runtime role on the managed database.
+make db-bootstrap
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend alembic upgrade head
@@ -189,15 +274,19 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend pyt
 Point an A record at the VPS **before** the first start — Caddy obtains a Let's
 Encrypt certificate on boot and needs the domain to resolve.
 
+Allowlist the VPS's outbound IP at your database provider, and keep the database
+off the public internet otherwise. If the provider offers a private network in
+the same region, use it: it is both faster and one less thing exposed.
+
 The app refuses to start in production with placeholder secrets, a plain-HTTP
 `FRONTEND_URL`, or `ALLOW_PRIVATE_NETWORK_FETCH=true`. That is deliberate: those
 are the mistakes worth failing loudly on.
 
 ### Firewall
 
-Only the proxy is exposed. Postgres and Redis have no `ports:` entry in the
-production compose file, so they are reachable only on the internal Docker
-network.
+Only the proxy is exposed. Redis has no `ports:` entry in the production compose
+file, so it is reachable only on the internal Docker network, and Postgres is
+not on this box at all.
 
 ```bash
 ufw default deny incoming
@@ -209,15 +298,16 @@ ufw allow 443/udp       # HTTP/3
 ufw enable
 ```
 
-Do **not** open 5432 or 6379. If you need psql access, tunnel it:
-`ssh -L 5432:localhost:5432 user@vps` after temporarily publishing the port, or
-just use `docker compose exec postgres psql`.
+Do **not** open 5432 or 6379 inbound — nothing needs to reach into this box on
+either. The database connection is outbound only. For an interactive session
+use `make psql` (or `.\geo.ps1 psql`), which runs a client container against the
+configured DSN.
 
 ### Updating
 
 ```bash
-cd /opt/geo-audit
-./infra/backup/pg_backup.sh        # back up before you change anything
+cd /opt/checkgeo
+./infra/backup/pg_backup.sh        # or rely on your provider's snapshot
 git pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml build
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -228,23 +318,40 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend ale
 
 ## Backups and restore
 
-There is no managed snapshot on a self-hosted box, so this is the whole backup
-story.
+### Check your provider first
+
+Most managed Postgres services take automated snapshots with point-in-time
+recovery. That is **strictly better** than a nightly dump: nothing to schedule,
+nothing to silently stop working, and a recovery granularity of seconds rather
+than up to a day. If yours offers it, turn it on and do not schedule the cron
+job below — a second backup system that nobody watches is a liability, not
+redundancy.
+
+Verify two things at the provider, since neither is universal: that snapshots
+are actually enabled (some default to off), and how long they are retained.
+
+### If the provider has no snapshots — or you want an off-provider copy
 
 ```bash
 crontab -e
 # Nightly at 03:00
-0 3 * * * cd /opt/geo-audit && ./infra/backup/pg_backup.sh >> /var/log/geo-backup.log 2>&1
+0 3 * * * cd /opt/checkgeo && ./infra/backup/pg_backup.sh >> /var/log/checkgeo-backup.log 2>&1
 ```
 
-The script writes a compressed `pg_dump` plus a tarball of stored PDF reports
-into `./backups`, prunes anything older than `RETENTION_DAYS` (default 14), and
-only publishes the final filename once the dump completes — so an interrupted
-run cannot leave a half-written file that looks like a good backup.
+The script dumps the managed database through a throwaway client container using
+the owner credentials from `.env`, writes a compressed `pg_dump` plus a tarball
+of stored PDF reports into `./backups`, prunes anything older than
+`RETENTION_DAYS` (default 14), and only publishes the final filename once the
+dump completes — so an interrupted run cannot leave a half-written file that
+looks like a good backup.
 
-**Copy backups off the machine.** A backup on the same disk as the database does
-not survive the failure it exists for. Add a second cron step with `rclone` or
-`rsync` to object storage or another host.
+**PDF reports are not in the database.** They live on a Docker volume on the
+VPS, so provider snapshots do not cover them. Whichever backup route you choose,
+the reports still need the tarball step this script performs.
+
+**Copy backups off the machine.** A backup on the same disk as the application
+does not survive the failure it exists for. Add a second cron step with `rclone`
+or `rsync` to object storage or another host.
 
 ### Restore drill — do this before you need it
 
@@ -276,6 +383,7 @@ Two runners are provided — `make` for Linux/macOS/VPS, `geo.ps1` for Windows.
 | Lint + types | `make lint` | `.\geo.ps1 lint` |
 | Dependency audit | `make audit` | `.\geo.ps1 audit` |
 | psql | `make psql` | `.\geo.ps1 psql` |
+| Create runtime DB role (once) | `make db-bootstrap` | `.\geo.ps1 db-bootstrap` |
 | Backup | `make backup` | `.\geo.ps1 backup` |
 | Production up | `make prod-up` | `.\geo.ps1 prod-up` |
 
@@ -284,22 +392,43 @@ Two runners are provided — `make` for Linux/macOS/VPS, `geo.ps1` for Windows.
 ## Architecture
 
 ```
-Browser ──HTTPS──> Caddy ──┬──> /api/*  ──> FastAPI (backend)
-                           └──> /*      ──> nginx (built SPA)
-                                              │
-                            Postgres 16 ──────┤
-                            Redis ────────────┤
-                            Celery worker ────┘   (audits, Share of Voice, PDFs)
+                        ┌───────────── the VPS ─────────────┐
+Browser ──HTTPS──> Caddy ──┬──> /api/*  ──> FastAPI (backend)│
+                        │  └──> /*      ──> nginx (built SPA)│
+                        │                     │              │
+                        │      Redis ─────────┤              │
+                        │      Celery worker ─┘              │
+                        └────────────┬──────────────────────-┘
+                                     │ TLS, outbound only
+                                     ▼
+                         Managed Postgres 16 (off-box)
 ```
 
 - **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2.
-- **Frontend** — TypeScript, React 18, Vite, Tailwind, TanStack Query, Recharts.
+- **Frontend** — TypeScript, React 18, Vite, Tailwind, TanStack Query, Recharts,
+  Motion for the marketing-page animations.
 - **Worker** — Celery. Audits fetch many external pages and can make a large
   number of LLM calls, so they never run inside a request.
 - **Proxy** — Caddy rather than Nginx: on a single VPS it gets automatic
   Let's Encrypt certificates with three lines of config and renews them itself.
+- **Database** — external and managed; see [Database](#database).
 
 Caddy is the only container that publishes ports.
+
+### Typography
+
+Two families, kept deliberately separate so the marketing site and the product
+never drift into looking like each other:
+
+| Surface | Family | Tailwind utility |
+|---|---|---|
+| Landing page, sign-in, sign-up | Poppins | `font-landing` |
+| User panel, admin panel | Open Sans | `font-app` |
+
+Both are self-hosted through `@fontsource` (see `src/styles/fonts.ts`) rather
+than linked from a font CDN — no third-party request on first paint, no referrer
+leaked to a font host, and no CSP exception needed. `font-app` is the inherited
+default; the marketing tree opts into `font-landing` at its root.
 
 ---
 
@@ -442,6 +571,26 @@ shows the ACME error.
 **`got Future attached to a different loop` in the worker.** Every Celery task
 must dispose the database engine before its event loop closes — use
 `run_in_loop()` from `app/worker/tasks.py` rather than bare `asyncio.run`.
+
+**404 on `/api/v1/...` from `http://127.0.0.1:5173`.** You are on the bare Vite
+dev server. It proxies `/api` and `/health` to the backend, so this should work
+— if it 404s, the proxy target is wrong for your setup: it defaults to the
+`backend` Compose service, so set `VITE_DEV_PROXY_TARGET=http://localhost:8000`
+when running Vite on the host instead of in Docker. Either way, prefer
+<http://localhost:8080>; sessions are only fully supported on that origin.
+
+**Backend will not start: "DATABASE_URL still contains an unexpanded `${...}`".**
+The `.env` composes that value out of the other variables, and Docker Compose
+expands the references when *it* loads the file. Anything else reading `.env`
+directly — pytest, a bare `alembic` run, the app outside Compose — does not.
+Write the value out literally, or leave it unset and let the app build the DSN
+from the `POSTGRES_*` components.
+
+**`connection requires a valid client certificate` / TLS errors on startup.**
+Check `POSTGRES_SSLMODE` against what the provider expects, and remember the two
+spellings: `?ssl=` for the asyncpg runtime DSN, `?sslmode=` for the psycopg
+migration DSN. If you set `verify-full`, `POSTGRES_SSLROOTCERT` must point at a
+CA file that exists *inside the container*, not on the host.
 
 ---
 

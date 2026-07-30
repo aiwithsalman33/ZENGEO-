@@ -35,6 +35,15 @@
 
     --radius: 0.7rem;
 
+    /* --- Typography ---------------------------------------------------
+       Two families that must never bleed into each other: the marketing
+       surface wears Poppins, the authenticated product wears Open Sans.
+       Nothing consumes these directly - use the `font-landing` / `font-app`
+       Tailwind utilities, which are the only things that read them. Both are
+       self-hosted (see src/styles/fonts.ts). */
+    --font-landing: 'Poppins', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-app: 'Open Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
     /* --- Data visualisation tokens -----------------------------------
        Score bands are STATUS colours (ordered severity), not categorical
        series, so they are always rendered beside a visible band label -
@@ -112,7 +121,6 @@
 
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: 'cv11', 'ss01';
     text-rendering: optimizeLegibility;
   }
 
@@ -147,6 +155,37 @@
     background-image:
       radial-gradient(60rem 30rem at 50% -10%, hsl(var(--primary) / 0.16), transparent 60%),
       radial-gradient(40rem 24rem at 90% 10%, hsl(268 70% 60% / 0.12), transparent 60%);
+  }
+
+  /* Hero mesh. Large blurred colour fields that drift behind the headline;
+     `contain: paint` keeps their blur from inflating the parent's paint area. */
+  .mesh-blob {
+    @apply pointer-events-none absolute rounded-full blur-3xl;
+    will-change: transform, opacity;
+  }
+
+  /* CTA lift. The glow is a shadow rather than a filter so it composites
+     cheaply, and both properties are transitioned rather than animated so
+     nothing moves until the pointer is actually over the button. */
+  .cta-glow {
+    @apply transition-[transform,box-shadow] duration-200 ease-out;
+  }
+  .cta-glow:hover {
+    @apply -translate-y-0.5;
+    box-shadow:
+      0 8px 24px -6px hsl(var(--primary) / 0.55),
+      0 0 0 1px hsl(var(--primary) / 0.25);
+  }
+  .cta-glow:active {
+    @apply translate-y-0;
+  }
+
+  /* Feature-card hover lift. */
+  .card-lift {
+    @apply transition-[transform,box-shadow,border-color] duration-200 ease-out;
+  }
+  .card-lift:hover {
+    @apply -translate-y-1 border-primary/40 shadow-lg;
   }
 
   .card-surface {

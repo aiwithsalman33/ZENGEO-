@@ -1,15 +1,19 @@
-# GEO Audit SaaS - task runner.
+# CheckGEO.ai - task runner.
 #
 # Windows users without GNU make: use the equivalent PowerShell runner instead,
 #   .\geo.ps1 up      .\geo.ps1 migrate      .\geo.ps1 seed-admin
 
 COMPOSE      := docker compose
 COMPOSE_PROD := docker compose -f docker-compose.yml -f docker-compose.prod.yml
+# Postgres client for one-off work against the managed database. Joining the
+# compose network lets the same command reach the dev container by hostname.
+PG_IMAGE     := postgres:16-alpine
+PG_NETWORK   := geo-audit_internal
 
 .DEFAULT_GOAL := help
 .PHONY: help secrets up down restart build logs ps migrate revision seed-admin \
         test test-backend test-frontend lint audit shell psql redis-cli \
-        backup restore prod-up prod-down prod-logs prod-migrate clean
+        db-bootstrap backup restore prod-up prod-down prod-logs prod-migrate clean
 
 help: ## Show available commands
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -72,8 +76,19 @@ audit: ## Dependency vulnerability scan
 shell: ## Shell inside the backend container
 	$(COMPOSE) exec backend bash
 
-psql: ## psql session against the app database
-	$(COMPOSE) exec postgres sh -c 'PGPASSWORD="$$POSTGRES_PASSWORD" psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+psql: ## psql session against the app database (managed or local)
+	@set -a; . ./.env; set +a; \
+	docker run --rm -it --network $(PG_NETWORK) \
+		-e PGDSN="postgresql://$$POSTGRES_USER:$$POSTGRES_PASSWORD@$$POSTGRES_HOST:$${POSTGRES_PORT:-5432}/$$POSTGRES_DB?sslmode=$${POSTGRES_SSLMODE:-require}" \
+		$(PG_IMAGE) sh -c 'psql "$$PGDSN"'
+
+db-bootstrap: ## ONE-TIME on first deploy: create the least-privilege runtime role
+	@set -a; . ./.env; set +a; \
+	docker run --rm -i --network $(PG_NETWORK) \
+		-e PGDSN="postgresql://$$POSTGRES_USER:$$POSTGRES_PASSWORD@$$POSTGRES_HOST:$${POSTGRES_PORT:-5432}/$$POSTGRES_DB?sslmode=$${POSTGRES_SSLMODE:-require}" \
+		-e APP_DB_USER="$$APP_DB_USER" -e APP_DB_PASSWORD="$$APP_DB_PASSWORD" \
+		-v "$$PWD/infra/postgres/bootstrap:/bootstrap:ro" \
+		$(PG_IMAGE) sh -c 'psql "$$PGDSN" -v app_user="$$APP_DB_USER" -v app_password="$$APP_DB_PASSWORD" -f /bootstrap/10-roles.sql'
 
 redis-cli: ## redis-cli session
 	$(COMPOSE) exec redis redis-cli
@@ -96,6 +111,6 @@ prod-logs: ## Tail production logs
 prod-migrate: ## Apply migrations in production
 	$(COMPOSE_PROD) exec backend alembic upgrade head
 
-clean: ## Stop everything and DELETE all volumes (destroys the database)
-	@printf "This deletes the database, Redis data and stored PDF reports. Type 'yes' to continue: " \
+clean: ## Stop everything and DELETE local volumes (the LOCAL dev database only)
+	@printf "This deletes the local dev database, Redis data and stored PDF reports.\nThe managed database is NOT touched. Type 'yes' to continue: " \
 		&& read ans && [ "$$ans" = "yes" ] && $(COMPOSE) down -v || echo "Aborted."

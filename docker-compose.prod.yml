@@ -5,23 +5,19 @@
 # Adds: published 80/443, resource limits, read-only root filesystems, dropped
 # capabilities, no new privileges, and log rotation.
 
-services:
-  postgres:
-    # Deliberately no `ports:` - reachable only inside the Docker network.
-    security_opt: ["no-new-privileges:true"]
-    deploy:
-      resources:
-        limits: {cpus: "1.5", memory: 1g}
-    logging: &logging
-      driver: json-file
-      options: {max-size: "10m", max-file: "5"}
+# There is no `postgres` service: production connects to an external managed
+# Postgres over TLS (DATABASE_URL). Nothing here should ever reintroduce one -
+# a container on the same box would quietly become the real database.
 
+services:
   redis:
     security_opt: ["no-new-privileges:true"]
     deploy:
       resources:
         limits: {cpus: "0.5", memory: 384m}
-    logging: *logging
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
 
   backend:
     environment:

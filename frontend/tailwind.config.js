@@ -65,7 +65,13 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       fontFamily: {
-        sans: ['Inter var', 'Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        // The authenticated product is the larger surface, so it is the default
+        // that Tailwind's preflight puts on <html>. The marketing tree opts into
+        // `font-landing` explicitly at its root - keeping the two as separate
+        // families means neither can inherit the other's font by accident.
+        sans: ['var(--font-app)'],
+        app: ['var(--font-app)'],
+        landing: ['var(--font-landing)'],
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
       },
       keyframes: {
@@ -84,11 +90,32 @@ export default {
         shimmer: {
           '100%': { transform: 'translateX(100%)' },
         },
+        // Two identical copies of the track sit side by side, so translating
+        // exactly -50% lands the second copy where the first began - the loop
+        // has no visible seam and never needs to reset.
+        marquee: {
+          from: { transform: 'translateX(0)' },
+          to: { transform: 'translateX(-50%)' },
+        },
+        // Slow drift for the hero's gradient blobs. Transform and opacity only:
+        // both are compositor properties, so an animation that runs forever
+        // behind the hero costs no layout or paint work.
+        'blob-drift-a': {
+          '0%, 100%': { transform: 'translate3d(0, 0, 0) scale(1)', opacity: '0.55' },
+          '50%': { transform: 'translate3d(6%, -5%, 0) scale(1.15)', opacity: '0.75' },
+        },
+        'blob-drift-b': {
+          '0%, 100%': { transform: 'translate3d(0, 0, 0) scale(1.08)', opacity: '0.5' },
+          '50%': { transform: 'translate3d(-7%, 6%, 0) scale(0.92)', opacity: '0.7' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
         'fade-in': 'fade-in 0.25s ease-out',
+        marquee: 'marquee 38s linear infinite',
+        'blob-drift-a': 'blob-drift-a 19s ease-in-out infinite',
+        'blob-drift-b': 'blob-drift-b 24s ease-in-out infinite',
       },
     },
   },

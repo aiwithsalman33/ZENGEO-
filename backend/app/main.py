@@ -40,7 +40,7 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
 def create_app() -> FastAPI:
     docs_url = None if settings.is_production else "/docs"
     app = FastAPI(
-        title="GEO Audit API",
+        title="CheckGEO.ai API",
         version="1.0.0",
         description=(
             "Audits how visible and citable a business is inside AI-generated "
