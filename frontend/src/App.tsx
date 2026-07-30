@@ -1,24 +1,107 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { ProtectedRoute, PublicOnlyRoute } from '@/components/ProtectedRoute'
+import { LoadingScreen } from '@/components/ui/feedback'
+import { TooltipProvider } from '@/components/ui/misc'
+import { ToastProvider } from '@/components/ui/toast'
+import { AuthProvider } from '@/lib/auth'
+import { QueryProvider } from '@/lib/query'
 
-// Phase 1 placeholder: proves the browser -> Caddy -> FastAPI path works.
-// Replaced by the router shell in phase 4.
+// Route-level code splitting: the marketing page should not ship the charting
+// library, and a signed-out visitor should not download the admin panel.
+const Landing = lazy(() => import('@/pages/Landing'))
+const Login = lazy(() => import('@/pages/Login'))
+const Signup = lazy(() => import('@/pages/Signup'))
+const ForgotPassword = lazy(() => import('@/pages/ForgotPassword'))
+const ResetPassword = lazy(() => import('@/pages/ResetPassword'))
+const VerifyEmail = lazy(() => import('@/pages/VerifyEmail'))
+const NotFound = lazy(() => import('@/pages/NotFound'))
+
+const UserLayout = lazy(() => import('@/components/layout/UserLayout'))
+const Dashboard = lazy(() => import('@/pages/app/Dashboard'))
+const NewAudit = lazy(() => import('@/pages/app/NewAudit'))
+const AuditDetail = lazy(() => import('@/pages/app/AuditDetail'))
+const Reports = lazy(() => import('@/pages/app/Reports'))
+const SettingsPage = lazy(() => import('@/pages/app/Settings'))
+
+const AdminLayout = lazy(() => import('@/components/layout/AdminLayout'))
+const AdminOverview = lazy(() => import('@/pages/admin/Overview'))
+const AdminUsers = lazy(() => import('@/pages/admin/Users'))
+const AdminUserDetail = lazy(() => import('@/pages/admin/UserDetail'))
+const AdminAudits = lazy(() => import('@/pages/admin/Audits'))
+const AdminActivity = lazy(() => import('@/pages/admin/Activity'))
+
 export default function App() {
-  const [status, setStatus] = useState<string>('checking…')
-
-  useEffect(() => {
-    fetch('/health/ready')
-      .then((r) => r.json())
-      .then((d) => setStatus(JSON.stringify(d)))
-      .catch((e) => setStatus(`error: ${String(e)}`))
-  }, [])
-
   return (
-    <main className="glow-surface flex min-h-screen items-center justify-center p-6">
-      <div className="card-surface max-w-lg space-y-3 p-8">
-        <h1 className="text-2xl font-semibold">GEO Audit</h1>
-        <p className="text-sm text-muted-foreground">Backend readiness:</p>
-        <pre className="overflow-x-auto rounded-md bg-muted p-3 text-xs">{status}</pre>
-      </div>
-    </main>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <QueryProvider>
+        <AuthProvider>
+          <TooltipProvider delayDuration={200}>
+            <ToastProvider>
+              <Suspense fallback={<LoadingScreen />}>
+                <Routes>
+                  {/* Public */}
+                  <Route path="/" element={<Landing />} />
+                  <Route
+                    path="/login"
+                    element={
+                      <PublicOnlyRoute>
+                        <Login />
+                      </PublicOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/signup"
+                    element={
+                      <PublicOnlyRoute>
+                        <Signup />
+                      </PublicOnlyRoute>
+                    }
+                  />
+                  <Route path="/forgot-password" element={<ForgotPassword />} />
+                  <Route path="/reset-password" element={<ResetPassword />} />
+                  <Route path="/verify-email" element={<VerifyEmail />} />
+
+                  {/* User panel */}
+                  <Route
+                    path="/app"
+                    element={
+                      <ProtectedRoute>
+                        <UserLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route index element={<Dashboard />} />
+                    <Route path="audits/new" element={<NewAudit />} />
+                    <Route path="audits/:auditId" element={<AuditDetail />} />
+                    <Route path="reports" element={<Reports />} />
+                    <Route path="settings" element={<SettingsPage />} />
+                  </Route>
+
+                  {/* Admin panel - also re-checked server-side on every request */}
+                  <Route
+                    path="/admin"
+                    element={
+                      <ProtectedRoute requireAdmin>
+                        <AdminLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route index element={<AdminOverview />} />
+                    <Route path="users" element={<AdminUsers />} />
+                    <Route path="users/:userId" element={<AdminUserDetail />} />
+                    <Route path="audits" element={<AdminAudits />} />
+                    <Route path="activity" element={<AdminActivity />} />
+                  </Route>
+
+                  <Route path="/dashboard" element={<Navigate to="/app" replace />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Suspense>
+            </ToastProvider>
+          </TooltipProvider>
+        </AuthProvider>
+      </QueryProvider>
+    </BrowserRouter>
   )
 }
