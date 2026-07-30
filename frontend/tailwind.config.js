@@ -51,12 +51,12 @@ export default {
           DEFAULT: 'hsl(var(--popover))',
           foreground: 'hsl(var(--popover-foreground))',
         },
-        // Score bands used by gauges, badges and charts.
+        // Score bands. Status colours, always paired with a visible label.
         band: {
-          poor: 'hsl(var(--band-poor))',
-          fair: 'hsl(var(--band-fair))',
-          good: 'hsl(var(--band-good))',
-          excellent: 'hsl(var(--band-excellent))',
+          poor: 'var(--band-poor)',
+          fair: 'var(--band-fair)',
+          good: 'var(--band-good)',
+          excellent: 'var(--band-excellent)',
         },
       },
       borderRadius: {

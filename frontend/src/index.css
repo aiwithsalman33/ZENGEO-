@@ -33,12 +33,27 @@
     --input: 224 16% 89%;
     --ring: 246 74% 60%;
 
-    --band-poor: 0 72% 55%;
-    --band-fair: 32 92% 52%;
-    --band-good: 199 89% 48%;
-    --band-excellent: 152 62% 42%;
-
     --radius: 0.7rem;
+
+    /* --- Data visualisation tokens -----------------------------------
+       Score bands are STATUS colours (ordered severity), not categorical
+       series, so they are always rendered beside a visible band label -
+       colour never carries the meaning alone. Each step is selected for
+       its own surface rather than flipped, and every one clears 3:1:
+       light 4.83 / 5.18 / 4.92 / 5.02, dark 6.57 / 8.03 / 10.89 / 10.43. */
+    --band-poor: #dc2626;
+    --band-fair: #c2410c;
+    --band-good: #a16207;
+    --band-excellent: #15803d;
+
+    /* Single-series charts use categorical slot 1 only. There is never a
+       second series, so no palette cycling and no legend box. */
+    --viz-series-1: #2a78d6;
+    --viz-series-1-soft: #cde2fb;
+    --viz-grid: #e1e0d9;
+    --viz-axis: #c3c2b7;
+    --viz-muted: #898781;
+    --viz-surface: #ffffff;
   }
 
   .dark {
@@ -71,10 +86,19 @@
     --input: 226 20% 22%;
     --ring: 246 84% 68%;
 
-    --band-poor: 0 72% 60%;
-    --band-fair: 32 92% 58%;
-    --band-good: 199 89% 56%;
-    --band-excellent: 152 55% 50%;
+    /* Dark steps are chosen for the dark surface, not derived from the
+       light ones - an automatic flip would drop below the contrast floor. */
+    --band-poor: #f87171;
+    --band-fair: #fb923c;
+    --band-good: #fbbf24;
+    --band-excellent: #4ade80;
+
+    --viz-series-1: #3987e5;
+    --viz-series-1-soft: #184f95;
+    --viz-grid: #2c2c2a;
+    --viz-axis: #383835;
+    --viz-muted: #898781;
+    --viz-surface: #121521;
   }
 
   * {

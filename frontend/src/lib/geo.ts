@@ -89,8 +89,16 @@ export function scoreBand(score: number | null | undefined): ScoreBand {
   return 'Poor'
 }
 
-/** CSS variable name for a score's band colour, usable in charts and SVG. */
-export function bandColorVar(score: number | null | undefined): string {
+/**
+ * Colour for a score band.
+ *
+ * These are status colours on an ordered severity scale, not categorical
+ * series colours — so they are always rendered next to the band label and
+ * never carry the meaning on their own. Each step is picked for its own
+ * surface (light and dark are separate selections, not a flip) and clears
+ * 3:1 contrast against it.
+ */
+export function bandColor(score: number | null | undefined): string {
   const band = scoreBand(score)
   return {
     Poor: 'var(--band-poor)',
@@ -98,10 +106,6 @@ export function bandColorVar(score: number | null | undefined): string {
     Good: 'var(--band-good)',
     Excellent: 'var(--band-excellent)',
   }[band]
-}
-
-export function bandColor(score: number | null | undefined): string {
-  return `hsl(${bandColorVar(score)})`
 }
 
 export function bandTextClass(score: number | null | undefined): string {

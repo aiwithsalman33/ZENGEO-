@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routes import audits, auth, businesses, health, llm_keys, reports, users
+from app.api.routes import (
+    admin,
+    audits,
+    auth,
+    businesses,
+    dashboard,
+    health,
+    llm_keys,
+    reports,
+    users,
+)
 from app.core.config import settings
 
 api_router = APIRouter()
@@ -19,5 +29,7 @@ v1.include_router(llm_keys.router)
 v1.include_router(businesses.router)
 v1.include_router(audits.router)
 v1.include_router(reports.router)
+v1.include_router(dashboard.router)
+v1.include_router(admin.router)
 
 api_router.include_router(v1)
