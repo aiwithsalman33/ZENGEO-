@@ -39,7 +39,7 @@
     "motion": "^12.43.0",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-hook-form": "7.54.2",
+    "react-hook-form": "7.83.0",
     "react-router-dom": "7.18.2",
     "recharts": "2.15.0",
     "tailwind-merge": "2.6.0",
