@@ -14,10 +14,12 @@ free and keeps anyone from imposing a limit on how much a user tests.
 
 - [What it measures](#what-it-measures)
 - [Database](#database)
+- [Email delivery](#email-delivery)
 - [Quick start (local)](#quick-start-local)
 - [First admin](#first-admin)
 - [Connecting an AI provider key](#connecting-an-ai-provider-key)
 - [Deploying to a VPS](#deploying-to-a-vps)
+- [Self-hosted database VPS](#self-hosted-database-vps)
 - [Backups and restore](#backups-and-restore)
 - [Everyday commands](#everyday-commands)
 - [Architecture](#architecture)
@@ -53,9 +55,15 @@ rather than being silently capped at 85. The report says so explicitly.
 ## Database
 
 **Postgres is external.** There is no `postgres` service in `docker-compose.yml`
-or in the production overlay — the app connects to a managed instance over TLS.
-Redis stays local in Docker, because it holds only rate-limit counters and the
-Celery queue: nothing whose loss needs to outlive a restart.
+or in the production overlay — the app connects out to a database on another
+host over TLS. Redis stays local in Docker, because it holds only rate-limit
+counters and the Celery queue: nothing whose loss needs to outlive a restart.
+
+That host can be a managed provider or a second VPS you run yourself. If you are
+self-hosting it, read [Self-hosted database VPS](#self-hosted-database-vps) —
+server TLS, `pg_hba.conf`, the firewall and backups all become your job, and
+`POSTGRES_SSLMODE=require` will simply fail to connect until the server is
+actually offering TLS.
 
 Local development is the one exception. `docker-compose.override.yml` — which
 plain `docker compose up` applies automatically — adds a throwaway Postgres
@@ -106,16 +114,104 @@ production privileges cannot drift apart.
 
 ### TLS
 
-The hop to a managed database leaves the VPS, so it must be encrypted.
+The hop to the database leaves this box, so it must be encrypted.
 `POSTGRES_SSLMODE=require` is the minimum and the app **refuses to start in
 production** with anything weaker. Prefer `verify-full` with
-`POSTGRES_SSLROOTCERT` pointing at your provider's CA bundle when one is
-published — `require` encrypts the connection but does not prove who is on the
-other end of it.
+`POSTGRES_SSLROOTCERT` pointing at the CA that issued the server's certificate
+— `require` encrypts the connection but does not prove who is on the other end
+of it, so it stops passive sniffing but not an active man-in-the-middle.
 
 Note the two spellings if you set the DSNs explicitly: asyncpg wants `?ssl=`,
 libpq-based psycopg wants `?sslmode=`. Getting this wrong connects in cleartext
 rather than failing, which is why the production check inspects both.
+
+---
+
+## Email delivery
+
+Transactional mail (verification, password reset, email-change notice, audit
+complete) goes through **Resend**. The transport is chosen automatically:
+
+| Condition | Transport |
+|---|---|
+| `RESEND_API_KEY` set | Resend HTTP API |
+| Only `SMTP_HOST` set | SMTP |
+| Neither | Console — written to the backend log, never sent |
+
+`RESEND_API_KEY` is **required in production**; the app refuses to boot without
+it, because the console backend silently swallowing a password-reset link is the
+kind of failure nobody notices until a user cannot get back in.
+
+```dotenv
+RESEND_API_KEY=re_...
+MAIL_FROM=CheckGEO.ai <no-reply@yourdomain.example>
+```
+
+`MAIL_FROM` is parsed with the stdlib RFC 5322 parser into a display name and a
+bare address, and sent as Resend's `from`. Production also rejects a
+`MAIL_FROM` that is malformed, still on `example.com`, or missing a display name.
+
+### Required first-deploy step: verify the sending domain
+
+**Sends from an unverified domain are rejected or land in spam.** This cannot be
+done from the codebase — it is a dashboard-and-DNS job, and it must happen before
+the first real signup:
+
+1. In the [Resend dashboard](https://resend.com/domains), add the domain part of
+   your `MAIL_FROM` address as a sending domain.
+2. Resend shows a set of DNS records. Publish all of them at whoever hosts that
+   domain's DNS:
+   - **SPF** — a `TXT` record authorising Resend to send for the domain.
+   - **DKIM** — the `CNAME`/`TXT` records Resend gives you. This is what
+     cryptographically signs your mail; without it you are unauthenticated.
+   - **DMARC** — a `_dmarc` `TXT` record. Start at `p=none` while you confirm
+     delivery, then tighten to `p=quarantine` and eventually `p=reject`.
+     Publishing DKIM and SPF without DMARC leaves receivers no policy to apply.
+3. Wait for the dashboard to show the domain **Verified**. DNS propagation is
+   usually minutes but can take hours.
+4. Confirm end to end with the test-send endpoint below — do not wait for a real
+   user to discover it is broken.
+
+### Confirming it works after deploy
+
+```bash
+curl -X POST https://your-domain/api/v1/admin/email/test-send \
+     -H "Authorization: Bearer $ADMIN_ACCESS_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{}'                      # omit "to" and it goes to your own address
+```
+
+Admin-only, rate-limited to 10/hour, and written to the admin audit log — it can
+be pointed at an arbitrary address, so it is treated as a privileged action. It
+sends synchronously and reports the provider's answer rather than queueing, so a
+failure surfaces in the response instead of a worker log:
+
+```json
+{
+  "delivered": true,
+  "backend": "resend",
+  "to": "admin@yourdomain.example",
+  "sending_domain": "yourdomain.example",
+  "provider_message_id": "4ef9a417-…",
+  "detail": "Accepted by Resend. Check the inbox, and the spam folder …"
+}
+```
+
+`delivered: true` means Resend *accepted* the message. Landing in spam is a
+separate problem, and it means the SPF/DKIM/DMARC records need attention.
+
+### How sends are queued
+
+Everything except the test endpoint goes through the Celery worker, so a slow or
+failing provider never holds up the request that triggered it. The task retries
+up to 5 times with jittered exponential backoff (10s, capped at 10 minutes) —
+jittered so a provider incident does not turn the queue into a synchronised
+retry storm. Each send logs the Resend message id and HTTP status.
+
+The queue payload is the render context, not a rendered body: it keeps the Redis
+entry small, and a template fix reaches anything still waiting. If the broker is
+unreachable the message is sent inline instead — losing a verification link
+silently is worse than a slow signup.
 
 ---
 
@@ -316,42 +412,192 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend ale
 
 ---
 
+## Self-hosted database VPS
+
+Running Postgres yourself instead of on a managed provider means five things
+nobody else is doing for you. Work through them **on the database box** before
+pointing the app at it. Throughout: `APP_VPS_IP` is the application server's
+address, `DB_VPS_IP` is this one's.
+
+### 1. Server-side TLS
+
+`POSTGRES_SSLMODE=require` asks the *client* to demand TLS. If the server is not
+offering it, the connection fails outright — this is the step people skip and
+then debug for an hour.
+
+```bash
+# Simplest: a self-signed cert. Fine when the app pins it with verify-full.
+sudo -u postgres openssl req -new -x509 -days 3650 -nodes \
+  -out /var/lib/postgresql/server.crt \
+  -keyout /var/lib/postgresql/server.key \
+  -subj "/CN=$DB_VPS_IP"
+sudo -u postgres chmod 600 /var/lib/postgresql/server.key
+```
+
+In `postgresql.conf`:
+
+```conf
+ssl = on
+ssl_cert_file = '/var/lib/postgresql/server.crt'
+ssl_key_file  = '/var/lib/postgresql/server.key'
+ssl_min_protocol_version = 'TLSv1.2'
+```
+
+Postgres refuses to start if the key is group- or world-readable, which is why
+the `chmod 600` is not optional.
+
+To use `verify-full` from the app — worth doing, since it is what actually stops
+an active man-in-the-middle — copy `server.crt` to the app VPS, mount it into
+the backend container, and set `POSTGRES_SSLROOTCERT` to that path *inside the
+container*. With a self-signed cert the `CN` must match the `POSTGRES_HOST` value
+exactly.
+
+### 2. `listen_addresses` — do not open it wide
+
+```conf
+# NOT '*'. Bind only to the interface the app reaches you on - ideally a
+# private network shared by the two boxes, so 5432 never touches the internet.
+listen_addresses = '10.0.0.2'      # this box's private IP, plus 'localhost'
+```
+
+If your provider offers a private network or VPC between droplets, use it and
+put the private address here. That single change does more for the security of
+this setup than everything else on this list.
+
+### 3. `pg_hba.conf` — one host, TLS-only
+
+```conf
+# TYPE     DATABASE   USER          ADDRESS           METHOD
+hostssl    geo_audit  geo_runtime   10.0.0.1/32       scram-sha-256
+hostssl    geo_audit  geo_app       10.0.0.1/32       scram-sha-256
+local      all        postgres                        peer
+```
+
+`hostssl`, never `host`: a `host` line accepts unencrypted connections, so a
+client that fails to negotiate TLS is let in rather than rejected. `/32` is a
+single address — never `0.0.0.0/0`. Reload with `sudo systemctl reload postgresql`.
+
+### 4. Firewall — 5432 is not a public port
+
+```bash
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp                              # SSH, ideally from your IP only
+ufw allow from 10.0.0.1 to any port 5432      # ONLY the app VPS
+ufw enable
+ufw status verbose                            # confirm 5432 is not open to Anywhere
+```
+
+Verify from somewhere else that it is genuinely closed:
+
+```bash
+nc -zv "$DB_VPS_IP" 5432     # from a third machine: must time out or be refused
+```
+
+### 5. Create the roles
+
+Once, from the **app VPS** so the connection path is the one you are about to
+rely on — if this step cannot connect, neither will the app:
+
+```bash
+cd /opt/checkgeo
+make db-bootstrap            # or: .\geo.ps1 db-bootstrap
+```
+
+Then apply migrations and confirm the privilege split took:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend alembic upgrade head
+make psql -c 'create table nope(id int)'   # as geo_runtime: permission denied
+```
+
+### Checking it end to end
+
+```bash
+curl -fsS https://your-domain/healthz
+# {"status":"ok","database":"reachable","elapsed_ms":3.1}
+```
+
+If the app cannot reach the database it **exits on startup** rather than booting
+and 500-ing every request, and the log names the likely cause:
+
+```
+database_unreachable_on_startup host=10.0.0.2 port=5432 sslmode=require
+  error=ConnectionRefusedError
+  hint=Check pg_hba.conf allows this host over hostssl, that the server has
+       ssl=on, and that the runtime role's password is current.
+```
+
+Point uptime monitoring at `/healthz`, not `/health`: `/health` only says the
+process is running, and the whole failure mode worth catching here is the link
+between the two boxes dropping while the app itself is perfectly fine.
+
+---
+
 ## Backups and restore
 
-### Check your provider first
-
-Most managed Postgres services take automated snapshots with point-in-time
-recovery. That is **strictly better** than a nightly dump: nothing to schedule,
-nothing to silently stop working, and a recovery granularity of seconds rather
-than up to a day. If yours offers it, turn it on and do not schedule the cron
-job below — a second backup system that nobody watches is a liability, not
-redundancy.
-
-Verify two things at the provider, since neither is universal: that snapshots
-are actually enabled (some default to off), and how long they are retained.
-
-### If the provider has no snapshots — or you want an off-provider copy
+Self-hosting Postgres means there is no snapshot feature and nothing else
+watching: this cron job **is** the backup story.
 
 ```bash
 crontab -e
-# Nightly at 03:00
-0 3 * * * cd /opt/checkgeo && ./infra/backup/pg_backup.sh >> /var/log/checkgeo-backup.log 2>&1
+# Nightly at 03:00, with each dump copied straight off this machine.
+0 3 * * * cd /opt/checkgeo && BACKUP_REMOTE=user@backup-host:/srv/checkgeo-backups \
+          ./infra/backup/pg_backup.sh >> /var/log/checkgeo-backup.log 2>&1
 ```
 
-The script dumps the managed database through a throwaway client container using
+Run it from the **app VPS**: it already holds the credentials and the network
+path to the database, and keeping dumps off the database box is the point.
+
+The script dumps through a throwaway `postgres:16-alpine` client container using
 the owner credentials from `.env`, writes a compressed `pg_dump` plus a tarball
 of stored PDF reports into `./backups`, prunes anything older than
 `RETENTION_DAYS` (default 14), and only publishes the final filename once the
 dump completes — so an interrupted run cannot leave a half-written file that
 looks like a good backup.
 
-**PDF reports are not in the database.** They live on a Docker volume on the
-VPS, so provider snapshots do not cover them. Whichever backup route you choose,
-the reports still need the tarball step this script performs.
+**Set `BACKUP_REMOTE`.** With two VPS boxes, "off the machine" has to mean off
+*both* of them: dumps written on the app VPS die with the app VPS just as surely
+as ones on the database VPS. `BACKUP_REMOTE` is an `rsync`/`scp` destination and
+a failed copy fails the whole run, so cron mails you — a backup that quietly
+stopped replicating looks identical to a working one until the day you need it.
+Without it the script still runs, but warns loudly.
 
-**Copy backups off the machine.** A backup on the same disk as the application
-does not survive the failure it exists for. Add a second cron step with `rclone`
-or `rsync` to object storage or another host.
+**PDF reports are not in the database.** They live on a Docker volume on the app
+VPS, which is why the script tars them separately. A database-only backup
+restores every audit's scores and loses every generated report.
+
+### Restore procedure
+
+```bash
+cd /opt/checkgeo
+# 1. Fetch the dump back if it only exists off-box.
+scp user@backup-host:/srv/checkgeo-backups/geo_audit-2026-07-30T03-00-00Z.sql.gz backups/
+
+# 2. Restore. Names the target host and asks for confirmation before writing.
+./infra/backup/pg_restore.sh backups/geo_audit-2026-07-30T03-00-00Z.sql.gz
+```
+
+The script stops the backend and worker first (restoring under live traffic
+gives a torn result), streams the dump into the database through a client
+container, restarts the services, and applies any migrations newer than the
+dump. The dump is taken with `--clean --if-exists`, so it is safe to restore
+over an existing database.
+
+To restore the PDF reports as well:
+
+```bash
+docker compose exec -T backend tar -xzf - -C /data < <(gzip -dc backups/reports-2026-07-30T03-00-00Z.tar.gz)
+```
+
+Verify afterwards, rather than assuming:
+
+```bash
+curl -fsS https://your-domain/healthz          # database reachable
+make psql -c 'select count(*) from users'      # rows actually came back
+```
+
+### Restore drill — do this before you need it
 
 ### Restore drill — do this before you need it
 
@@ -392,16 +638,21 @@ Two runners are provided — `make` for Linux/macOS/VPS, `geo.ps1` for Windows.
 ## Architecture
 
 ```
-                        ┌───────────── the VPS ─────────────┐
-Browser ──HTTPS──> Caddy ──┬──> /api/*  ──> FastAPI (backend)│
-                        │  └──> /*      ──> nginx (built SPA)│
-                        │                     │              │
-                        │      Redis ─────────┤              │
-                        │      Celery worker ─┘              │
-                        └────────────┬──────────────────────-┘
-                                     │ TLS, outbound only
-                                     ▼
-                         Managed Postgres 16 (off-box)
+                     ┌──────────── app VPS ────────────┐
+Browser ──HTTPS──> Caddy ─┬──> /api/*  ──> FastAPI      │
+                     │    └──> /*      ──> nginx (SPA)  │
+                     │            Redis ────────────────┤
+                     │            Celery worker ────────┤
+                     └────────────────┬─────────────────┘
+                                      │
+              ┌───────────────────────┼───────────────────────┐
+              │ TLS (hostssl)         │  HTTPS                │
+              ▼                       ▼                       ▼
+      ┌── database VPS ──┐      Resend API          the sites being audited
+      │   Postgres 16    │    (transactional        + the LLM providers
+      │   5432, firewalled     mail)                  (user's own keys)
+      │   to the app VPS │
+      └──────────────────┘
 ```
 
 - **Backend** — Python 3.12, FastAPI, SQLAlchemy 2.0 async, Alembic, Pydantic v2.
@@ -411,7 +662,9 @@ Browser ──HTTPS──> Caddy ──┬──> /api/*  ──> FastAPI (backe
   number of LLM calls, so they never run inside a request.
 - **Proxy** — Caddy rather than Nginx: on a single VPS it gets automatic
   Let's Encrypt certificates with three lines of config and renews them itself.
-- **Database** — external and managed; see [Database](#database).
+- **Database** — off-box, reached over TLS; see [Database](#database) and
+  [Self-hosted database VPS](#self-hosted-database-vps).
+- **Email** — Resend, sent from the worker; see [Email delivery](#email-delivery).
 
 Caddy is the only container that publishes ports.
 

@@ -30,11 +30,83 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
             "Refusing to start in production with insecure configuration: "
             + "; ".join(problems)
         )
-    log.info("application_start", environment=settings.environment)
+    await _check_database_reachable()
+
+    log.info(
+        "application_start",
+        environment=settings.environment,
+        email_backend=settings.email_backend,
+        database_host=settings.postgres_host,
+    )
     yield
     await close_redis()
     await dispose_engine()
     log.info("application_stop")
+
+
+#: How long to wait for the database on boot. The database is on another host
+#: now, so "unreachable" is a normal-ish network event rather than an
+#: impossibility - but it should surface in seconds, not hang the boot.
+_STARTUP_DB_TIMEOUT_SECONDS = 10.0
+
+
+async def _check_database_reachable() -> None:
+    """Fail fast, and loudly, if the database is not there.
+
+    Without this the app boots happily and every request 500s instead, which
+    reads as an application bug rather than a network or firewall problem. The
+    process exits so the container restart policy handles the retry loop, and
+    the reason lands in the logs exactly once per attempt.
+    """
+    import asyncio
+
+    from sqlalchemy import text
+
+    from app.db.session import SessionLocal
+
+    try:
+        async with asyncio.timeout(_STARTUP_DB_TIMEOUT_SECONDS):
+            async with SessionLocal() as session:
+                await session.execute(text("SELECT 1"))
+    except TimeoutError as exc:
+        log.error(
+            "database_unreachable_on_startup",
+            host=settings.postgres_host,
+            port=settings.postgres_port,
+            sslmode=settings.postgres_sslmode,
+            timeout_seconds=_STARTUP_DB_TIMEOUT_SECONDS,
+            hint=(
+                "No response within the timeout. Usually a firewall dropping the "
+                "connection, or listen_addresses not covering this host."
+            ),
+        )
+        raise RuntimeError(
+            f"Database at {settings.postgres_host}:{settings.postgres_port} did not "
+            f"respond within {_STARTUP_DB_TIMEOUT_SECONDS:.0f}s"
+        ) from exc
+    except Exception as exc:
+        log.error(
+            "database_unreachable_on_startup",
+            host=settings.postgres_host,
+            port=settings.postgres_port,
+            sslmode=settings.postgres_sslmode,
+            error=f"{type(exc).__name__}: {exc}",
+            hint=(
+                "Check pg_hba.conf allows this host over hostssl, that the server "
+                "has ssl=on, and that the runtime role's password is current."
+            ),
+        )
+        raise RuntimeError(
+            f"Cannot reach the database at {settings.postgres_host}:"
+            f"{settings.postgres_port}: {type(exc).__name__}: {exc}"
+        ) from exc
+
+    log.info(
+        "database_reachable",
+        host=settings.postgres_host,
+        port=settings.postgres_port,
+        sslmode=settings.postgres_sslmode,
+    )
 
 
 def create_app() -> FastAPI:

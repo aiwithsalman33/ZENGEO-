@@ -11,10 +11,32 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import EmailStr, Field
 
 from app.db.models.user import UserRole
 from app.schemas.common import ORMModel, StrictModel
+
+
+class EmailTestRequest(StrictModel):
+    """Where to send the deliverability probe.
+
+    Optional: omitted, it goes to the calling administrator's own address,
+    which is the safe default. Allowing an arbitrary recipient is what makes
+    this endpoint worth rate-limiting and audit-logging.
+    """
+
+    to: EmailStr | None = None
+
+
+class EmailTestResult(StrictModel):
+    delivered: bool
+    backend: Literal["resend", "smtp", "console"]
+    to: str
+    mail_from: str
+    sending_domain: str
+    #: Resend's message id, when the provider returned one.
+    provider_message_id: str | None = None
+    detail: str
 
 
 class AdminUserRow(ORMModel):

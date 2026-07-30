@@ -14,7 +14,7 @@
 	encode zstd gzip
 
 	# API + probes -> FastAPI
-	@api path /api/* /health /health/* /docs /docs/* /openapi.json
+	@api path /api/* /health /health/* /healthz /docs /docs/* /openapi.json
 	handle @api {
 		reverse_proxy backend:8000
 	}

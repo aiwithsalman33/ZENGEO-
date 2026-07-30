@@ -37,8 +37,12 @@
 		}
 	}
 
-	# Health probe, useful for external uptime monitoring.
-	handle /health {
+	# Health probes for external uptime monitoring.
+	#   /health  - the process is up
+	#   /healthz - the database host is reachable from here. Point the uptime
+	#              monitor at this one: the database is on a separate box, so
+	#              the link between them can fail while the app is fine.
+	handle /health /healthz {
 		reverse_proxy backend:8000
 	}
 

@@ -60,6 +60,11 @@ async def change_email(
             status_code=status.HTTP_409_CONFLICT, detail="That address is already in use"
         )
 
+    # Captured before the change: the old address is the one an attacker who
+    # has just taken over the account does not control, so it is where the
+    # "this happened" notice has to go.
+    previous_email = user.email
+
     # The new address is unverified until confirmed, which re-gates audit runs.
     user.email = new_email
     user.is_email_verified = False
@@ -70,6 +75,9 @@ async def change_email(
 
     await email_service.send_verification_email(
         to=new_email, name=user.full_name, token=token
+    )
+    await email_service.send_email_changed_notice(
+        to=previous_email, name=user.full_name, new_email=new_email
     )
     log.info("email_changed", user_id=str(user.id))
     return Message(detail="Email updated. Check your inbox to confirm the new address.")

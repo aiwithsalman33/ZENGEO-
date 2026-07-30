@@ -11,13 +11,14 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import case, desc, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import AdminUser, DbSession, Pagination
+from app.core.config import settings
 from app.core.logging import get_logger
-from app.core.rate_limit import client_ip
+from app.core.rate_limit import RateLimit, client_ip
 from app.db.models.analytics import AdminAuditLog
 from app.db.models.audit import Audit, AuditStatus
 from app.db.models.business import Business
@@ -29,12 +30,19 @@ from app.schemas.admin import (
     AdminStats,
     AdminUserRow,
     AdminUserUpdate,
+    EmailTestRequest,
+    EmailTestResult,
 )
 from app.schemas.common import Message, Page
 from app.services import admin_log, auth_service
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 log = get_logger("admin")
+
+# Sending real mail on demand: tight, because every call costs provider quota
+# and an admin account is exactly what an attacker would use to turn this into
+# a spam relay.
+email_test_limit = RateLimit("10/hour", scope="admin-email-test")
 
 
 @router.get("/stats", response_model=AdminStats, summary="Platform-wide KPIs")
@@ -472,4 +480,83 @@ async def activity_log(
         total=total,
         page=pagination.page,
         page_size=pagination.page_size,
+    )
+
+
+@router.post(
+    "/email/test-send",
+    response_model=EmailTestResult,
+    dependencies=[Depends(email_test_limit)],
+    summary="Send a test message to confirm mail delivery works",
+)
+async def email_test_send(
+    payload: EmailTestRequest,
+    admin: AdminUser,
+    db: DbSession,
+    request: Request,
+) -> EmailTestResult:
+    """Prove the mail path end to end without waiting for a real signup.
+
+    Deliberately synchronous rather than queued: the point is to see the
+    provider's answer, and a queued send would return 202 and hide the failure
+    in a worker log. Recorded in the admin audit trail because it can be
+    pointed at an arbitrary address.
+    """
+    from app.services.email import EmailSendError, build_message, send_email_or_raise
+
+    recipient = str(payload.to) if payload.to else admin.email
+    backend = settings.email_backend
+    subject, html, text = build_message("test", {"name": admin.full_name or "there"})
+
+    delivered = True
+    provider_id: str | None = None
+    detail = ""
+    try:
+        provider_id = await send_email_or_raise(
+            to=recipient, subject=subject, html=html, text=text
+        ) or None
+        detail = {
+            "resend": "Accepted by Resend. Check the inbox, and the spam folder - "
+            "landing in spam means the domain's SPF/DKIM/DMARC records need attention.",
+            "smtp": "Handed to the SMTP server.",
+            "console": "No provider configured: the message was written to the "
+            "application log instead of being sent.",
+        }[backend]
+    except EmailSendError as exc:
+        delivered = False
+        detail = str(exc)
+
+    await admin_log.record(
+        db,
+        admin_user_id=admin.id,
+        action="email.test_send",
+        target_type="email",
+        target_id=recipient,
+        metadata={
+            "backend": backend,
+            "delivered": delivered,
+            "sending_domain": settings.mail_from_domain,
+            "provider_message_id": provider_id,
+        },
+        ip_address=client_ip(request),
+    )
+    await db.commit()
+
+    log.info(
+        "admin_email_test",
+        admin_id=str(admin.id),
+        to=recipient,
+        backend=backend,
+        delivered=delivered,
+        provider_message_id=provider_id,
+    )
+
+    return EmailTestResult(
+        delivered=delivered,
+        backend=backend,
+        to=recipient,
+        mail_from=settings.mail_from,
+        sending_domain=settings.mail_from_domain,
+        provider_message_id=provider_id,
+        detail=detail,
     )
