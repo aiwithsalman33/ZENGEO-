@@ -10,7 +10,7 @@ import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["development", "test", "production"]
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # --- Rate limits ---
     rate_limit_login: str = "10/15minutes"
     rate_limit_signup: str = "5/hour"
-    rate_limit_password_reset: str = "5/hour"
+    rate_limit_password_reset: str = "5/hour"  # noqa: S105 - a rate limit, not a secret
     rate_limit_audit_start: str = "20/hour"
     rate_limit_default: str = "300/minute"
 

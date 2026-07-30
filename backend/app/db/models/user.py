@@ -30,7 +30,7 @@ class UserRole(str, enum.Enum):
 
 class TokenPurpose(str, enum.Enum):
     email_verification = "email_verification"
-    password_reset = "password_reset"
+    password_reset = "password_reset"  # noqa: S105 - an enum label, not a secret
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):

@@ -48,6 +48,11 @@ class LLMApiKey(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     #: Optional model override, e.g. "gpt-4o-mini". Falls back to adapter default.
     model: Mapped[str | None] = mapped_column(String(120))
+    #: Ask the provider to answer with live web retrieval where it supports it.
+    #: Grounded answers make citation rates comparable across providers.
+    use_web_search: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
 
     user: Mapped["User"] = relationship(back_populates="api_keys")  # noqa: F821
 

@@ -38,7 +38,8 @@ from app.schemas.auth import (
     UserPublic,
 )
 from app.schemas.common import Message
-from app.services import auth_service, email as email_service, mfa
+from app.services import auth_service, mfa
+from app.services import email as email_service
 from app.services.auth_service import AuthError
 
 router = APIRouter(prefix="/auth", tags=["auth"])

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import secrets
@@ -64,10 +65,9 @@ def dummy_verify() -> None:
     Without this, "unknown email" returns measurably faster than "wrong
     password", which leaks whether an account exists.
     """
-    try:
+    # The verify always fails - burning the CPU cycles is the entire point.
+    with contextlib.suppress(Exception):
         _hasher.verify(_DUMMY_HASH, "not-the-password")
-    except Exception:
-        pass
 
 
 # --------------------------------------------------------------------------- #

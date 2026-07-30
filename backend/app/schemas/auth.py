@@ -65,9 +65,9 @@ class TokenResponse(StrictModel):
     """The refresh token is NOT in this body - it is set as an httpOnly cookie."""
 
     access_token: str
-    token_type: str = "bearer"
+    token_type: str = "bearer"  # noqa: S105 - the OAuth scheme name, not a secret
     expires_in: int
-    user: "UserPublic"
+    user: UserPublic
 
 
 class UserPublic(ORMModel):

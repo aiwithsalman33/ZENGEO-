@@ -33,6 +33,8 @@ export interface LLMApiKey {
   key_preview: string
   model: string | null
   is_active: boolean
+  /** Ask the provider to answer with live web retrieval where it supports it. */
+  use_web_search: boolean
   last_validated_at: string | null
   last_used_at: string | null
   created_at: string
@@ -42,10 +44,13 @@ export interface ProviderInfo {
   name: ProviderName
   display_name: string
   default_model: string
+  /** Suggestions only — any model the key can reach is accepted. */
   models: string[]
   key_format_hint: string
   docs_url: string
-  supports_citations: boolean
+  supports_web_search: boolean
+  /** True when retrieval cannot be turned off (Perplexity). */
+  always_grounded: boolean
 }
 
 export interface Business {
