@@ -1,0 +1,79 @@
+# Local development overrides - applied automatically by plain `docker compose up`.
+# Adds hot reload, source bind-mounts and host-only debug ports.
+# This file is NOT used in production (prod passes -f flags explicitly).
+
+services:
+  postgres:
+    ports:
+      # Bound to 127.0.0.1 so the database is reachable from a local psql/GUI
+      # but never from the network.
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  backend:
+    build:
+      args:
+        INSTALL_DEV: "true"
+    environment:
+      ENVIRONMENT: development
+      LOG_FORMAT: console
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/app
+    volumes:
+      - ./backend:/app
+      - reports_data:/data/reports
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  worker:
+    build:
+      args:
+        INSTALL_DEV: "true"
+    environment:
+      ENVIRONMENT: development
+      LOG_FORMAT: console
+    volumes:
+      - ./backend:/app
+      - reports_data:/data/reports
+    # Solo pool + no prefetch makes worker logs readable while developing.
+    command:
+      - celery
+      - -A
+      - app.worker.celery_app.celery_app
+      - worker
+      - --loglevel=info
+      - --pool=solo
+
+  frontend:
+    # Vite dev server instead of the static production build.
+    image: node:22-alpine
+    working_dir: /app
+    environment:
+      VITE_API_BASE_URL: /api/v1
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume keeps Linux-native node_modules out of the Windows mount.
+      - /app/node_modules
+    ports:
+      - "127.0.0.1:5173:5173"
+
+  caddy:
+    volumes:
+      - ./infra/caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      # Single same-origin entrypoint for development: http://localhost:8080
+      - "127.0.0.1:8080:8080"
