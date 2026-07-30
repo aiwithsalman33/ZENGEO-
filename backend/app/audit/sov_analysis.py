@@ -34,22 +34,64 @@ NEGATIVE_TERMS = {
 }
 
 
-def _name_pattern(name: str) -> re.Pattern[str] | None:
-    """Word-boundary matcher for a brand name.
+#: Trailing words that describe what a company *is* rather than name it.
+#: An assistant that says "Acme" about "Acme Analytics" is still mentioning the
+#: brand, and scoring that as invisible would be a false negative on the
+#: product's headline metric. Only a trailing descriptor is dropped, and only
+#: when a distinctive name remains - "General Motors" never becomes "General".
+GENERIC_SUFFIXES = {
+    "inc", "inc.", "llc", "ltd", "ltd.", "limited", "plc", "corp", "corp.",
+    "corporation", "co", "co.", "company", "gmbh", "bv", "ag", "sa", "srl",
+    "group", "holdings", "labs", "lab", "software", "technologies", "technology",
+    "tech", "solutions", "systems", "analytics", "digital", "media", "studio",
+    "studios", "agency", "consulting", "partners", "ventures", "io", "ai", "app",
+}
 
-    Matches the whole name, tolerating punctuation and spacing differences
-    ("Acme Corp." vs "Acme Corp"), without matching it as a substring of a
-    longer word.
+#: A leading token shorter than this is too generic to search for on its own.
+MIN_ALIAS_LENGTH = 4
+
+
+def brand_aliases(name: str) -> list[str]:
+    """The name plus, where safe, the same name without a trailing descriptor."""
+    cleaned = " ".join(name.split())
+    if not cleaned:
+        return []
+
+    aliases = [cleaned]
+    tokens = cleaned.split()
+
+    # Strip trailing descriptors one at a time, keeping each intermediate form.
+    while len(tokens) > 1 and tokens[-1].lower().strip(".,") in GENERIC_SUFFIXES:
+        tokens = tokens[:-1]
+        candidate = " ".join(tokens)
+        if len(candidate) >= MIN_ALIAS_LENGTH and candidate not in aliases:
+            aliases.append(candidate)
+
+    return aliases
+
+
+def _name_pattern(name: str) -> re.Pattern[str] | None:
+    """Word-boundary matcher for a brand name and its safe aliases.
+
+    Tolerates punctuation and spacing differences ("Acme Corp." vs "Acme Corp")
+    without ever matching inside a longer word - "Acme" must not match
+    "Acmetric".
     """
-    cleaned = name.strip()
-    if len(cleaned) < 2:
+    aliases = brand_aliases(name)
+    if not aliases or len(aliases[0]) < 2:
         return None
-    # Split on whitespace/punctuation, then allow flexible separators between parts.
-    parts = [re.escape(part) for part in re.split(r"[\s\-_.]+", cleaned) if part]
-    if not parts:
+
+    bodies: list[str] = []
+    for alias in aliases:
+        parts = [re.escape(part) for part in re.split(r"[\s\-_.]+", alias) if part]
+        if parts:
+            bodies.append(r"[\s\-_.]*".join(parts))
+    if not bodies:
         return None
-    body = r"[\s\-_.]*".join(parts)
-    return re.compile(rf"(?<![\w]){body}(?![\w])", re.IGNORECASE)
+
+    # Longest first so the fuller name wins when both would match.
+    bodies.sort(key=len, reverse=True)
+    return re.compile(rf"(?<![\w])(?:{'|'.join(bodies)})(?![\w])", re.IGNORECASE)
 
 
 @dataclass(slots=True)
