@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware, SecurityHeadersMiddleware
 from app.core.redis_client import close_redis
+from app.db.session import dispose_engine
 
 configure_logging(settings.log_level, settings.log_format)
 log = get_logger("startup")
@@ -32,6 +33,7 @@ async def lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
     log.info("application_start", environment=settings.environment)
     yield
     await close_redis()
+    await dispose_engine()
     log.info("application_stop")
 
 
