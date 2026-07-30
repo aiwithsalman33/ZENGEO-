@@ -12,7 +12,9 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
-from app.audit.context import AuditContext, PageSnapshot
+from bs4 import Tag
+
+from app.audit.context import AuditContext, PageSnapshot, attr_text
 from app.audit.pillars.base import Pillar, PillarResult, Recommendation, ScoreBuilder
 
 #: Claims that sound impressive and mean nothing. A model cannot verify these,
@@ -50,7 +52,9 @@ def _outbound_citations(page: PageSnapshot, own_host: str) -> list[str]:
     social = ("facebook.", "twitter.", "x.com", "instagram.", "linkedin.", "youtube.", "tiktok.", "pinterest.")
     found: list[str] = []
     for anchor in page.soup.find_all("a", href=True):
-        href = anchor["href"]
+        if not isinstance(anchor, Tag):
+            continue
+        href = attr_text(anchor, "href")
         if not href.startswith("http"):
             continue
         host = (urlparse(href).hostname or "").lower()
@@ -69,12 +73,14 @@ def _latest_date(page: PageSnapshot) -> datetime | None:
 
     if page.soup is not None:
         for tag in page.soup.find_all("time"):
-            value = tag.get("datetime") or tag.get_text(strip=True)
+            if not isinstance(tag, Tag):
+                continue
+            value = attr_text(tag, "datetime") or tag.get_text(strip=True)
             candidates.extend(_parse_dates(value))
         for prop in ("article:published_time", "article:modified_time", "og:updated_time"):
             meta = page.soup.find("meta", attrs={"property": prop})
-            if meta and meta.get("content"):
-                candidates.extend(_parse_dates(meta["content"]))
+            if isinstance(meta, Tag):
+                candidates.extend(_parse_dates(attr_text(meta, "content")))
 
     candidates.extend(_parse_dates(page.visible_text[:6000]))
     now = datetime.now(UTC)

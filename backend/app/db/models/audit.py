@@ -5,7 +5,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     DateTime,
@@ -23,8 +23,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
+if TYPE_CHECKING:
+    from app.db.models.business import Business
 
-class AuditStatus(str, enum.Enum):
+
+class AuditStatus(enum.StrEnum):
     pending = "pending"
     running = "running"
     completed = "completed"
@@ -62,7 +65,7 @@ class Audit(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     pdf_report_path: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
     #: 0-100, updated as pillars finish so the UI can show a progress bar.
-    progress: Mapped[int] = mapped_column(Numeric(5, 2), default=0, nullable=False)
+    progress: Mapped[float] = mapped_column(Numeric(5, 2), default=0, nullable=False)
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

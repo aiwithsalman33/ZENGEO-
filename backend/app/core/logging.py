@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import MutableMapping
 from contextvars import ContextVar
 from typing import Any
 
@@ -31,7 +32,10 @@ _SENSITIVE_KEY_PARTS = (
 )
 
 
-def _redact(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+EventDict = MutableMapping[str, Any]
+
+
+def _redact(_logger: Any, _name: str, event_dict: EventDict) -> EventDict:
     for key in list(event_dict):
         lowered = key.lower()
         if any(part in lowered for part in _SENSITIVE_KEY_PARTS):
@@ -39,7 +43,7 @@ def _redact(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, A
     return event_dict
 
 
-def _add_request_id(_logger: Any, _name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
+def _add_request_id(_logger: Any, _name: str, event_dict: EventDict) -> EventDict:
     event_dict.setdefault("request_id", request_id_ctx.get())
     return event_dict
 

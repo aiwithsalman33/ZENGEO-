@@ -167,7 +167,7 @@ async def list_users(
         .subquery()
     )
 
-    rows = await db.execute(
+    result = await db.execute(
         select(
             User,
             func.coalesce(audit_counts.c.audit_count, 0),
@@ -181,7 +181,7 @@ async def list_users(
         .offset(pagination.offset)
         .limit(pagination.page_size)
     )
-    rows = list(rows)
+    rows = result.all()
 
     user_ids = [row[0].id for row in rows]
     provider_map: dict[uuid.UUID, list[str]] = {}

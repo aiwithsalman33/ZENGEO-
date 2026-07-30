@@ -273,7 +273,9 @@ async def revoke_all_sessions(db: AsyncSession, user_id: uuid.UUID) -> int:
         .values(revoked_at=datetime.now(UTC))
     )
     await db.flush()
-    return int(result.rowcount or 0)
+    # Only a CursorResult carries rowcount; an UPDATE always produces one, but
+    # the static type is the broader Result.
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 # --------------------------------------------------------------------------- #

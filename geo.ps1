@@ -165,8 +165,8 @@ switch ($Task) {
         Invoke-Cmd ($Compose + @('exec', 'frontend', 'npm', 'run', 'typecheck'))
     }
     'audit' {
-        Invoke-Cmd ($Compose + @('exec', 'backend', 'pip-audit', '--requirement', 'requirements.txt'))
-        Invoke-Cmd ($Compose + @('exec', 'frontend', 'npm', 'audit', '--audit-level=high'))
+        Invoke-Cmd ($Compose + @('exec', 'backend', 'pip-audit', '--strict', '--requirement', 'requirements.txt'))
+        Invoke-Cmd ($Compose + @('exec', 'frontend', 'npm', 'run', 'audit:check'))
     }
 
     'prod-up'      { Invoke-Cmd ($ComposeProd + @('up', '-d', '--build')) }

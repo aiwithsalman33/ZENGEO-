@@ -5,6 +5,7 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -22,13 +23,19 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
+if TYPE_CHECKING:
+    # Runtime resolution is handled by SQLAlchemy's class registry via the
+    # quoted names below; these imports exist only so type checkers agree.
+    from app.db.models.business import Business
+    from app.db.models.llm_key import LLMApiKey
 
-class UserRole(str, enum.Enum):
+
+class UserRole(enum.StrEnum):
     user = "user"
     admin = "admin"
 
 
-class TokenPurpose(str, enum.Enum):
+class TokenPurpose(enum.StrEnum):
     email_verification = "email_verification"
     password_reset = "password_reset"  # noqa: S105 - an enum label, not a secret
 

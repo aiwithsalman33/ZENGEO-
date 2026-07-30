@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from app.audit.fetcher import FetchResult, SafeFetcher
 from app.core.config import settings
@@ -40,6 +40,21 @@ class PageSnapshot:
         if self.soup is None:
             return ""
         return _visible_text(self.soup)
+
+
+def attr_text(tag: Tag, name: str) -> str:
+    """One attribute as a plain string.
+
+    An HTML attribute can legitimately parse as a list (``class``, and anything
+    a malformed document duplicates), so callers that want a single value have
+    to say which one they mean rather than assuming.
+    """
+    value = tag.get(name)
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return str(value[0]) if value else ""
+    return str(value)
 
 
 def _visible_text(soup: BeautifulSoup) -> str:
@@ -142,7 +157,7 @@ def _internal_nav_links(page: PageSnapshot, hostname: str) -> list[str]:
     seen: list[str] = []
     skip_prefixes = ("#", "mailto:", "tel:", "javascript:")
     for anchor in containers:
-        href = (anchor.get("href") or "").strip()
+        href = attr_text(anchor, "href").strip()
         if not href or href.startswith(skip_prefixes):
             continue
         absolute = urljoin(page.url, href)

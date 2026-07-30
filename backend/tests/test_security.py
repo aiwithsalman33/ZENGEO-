@@ -68,7 +68,12 @@ class TestTokens:
     def test_a_token_signed_with_another_key_is_rejected(self):
         import jwt
 
-        forged = jwt.encode({"sub": "x", "type": "access", "exp": 9999999999}, "not-our-key")
+        # Full-length key so the forgery is realistic rather than being caught
+        # incidentally by a key-length check.
+        forged = jwt.encode(
+            {"sub": "x", "type": "access", "exp": 9999999999},
+            "an-attackers-own-signing-key-of-realistic-length-0123456789",
+        )
         with pytest.raises(jwt.PyJWTError):
             decode_access_token(forged)
 

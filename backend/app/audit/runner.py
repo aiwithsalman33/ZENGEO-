@@ -91,7 +91,9 @@ class AuditRunner:
             business = audit.business
             user_id = audit.user_id
             questionnaire: dict[str, Any] = dict(audit.questionnaire_answers or {})
-            business_snapshot = {
+            # Snapshotted while the session is open: the ORM object is detached
+            # once we leave this block, and the pillars run outside it.
+            business_snapshot: dict[str, Any] = {
                 "name": business.name,
                 "website_url": business.website_url,
                 "industry": business.industry,
@@ -164,7 +166,7 @@ class AuditRunner:
             band=composite.band,
             duration_s=round(elapsed, 2),
         )
-        await self._notify(composite.score, composite.band, business_snapshot["name"])
+        await self._notify(composite.score, composite.band, str(business_snapshot["name"]))
 
     async def _run_pillars(
         self, *, user_id: uuid.UUID, business: dict[str, Any], questionnaire: dict[str, Any]

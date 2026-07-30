@@ -21,10 +21,20 @@ export default defineConfig({
     sourcemap: false,
     rollupOptions: {
       output: {
-        // Split the heavy chart library out of the initial bundle.
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          charts: ['recharts'],
+        // Keep the heavy chart library out of the initial bundle, so the
+        // marketing page does not pay for charts it never renders.
+        manualChunks(id: string) {
+          if (id.includes('node_modules/recharts') || id.includes('node_modules/d3-')) {
+            return 'charts'
+          }
+          if (
+            id.includes('node_modules/react-dom') ||
+            id.includes('node_modules/react-router') ||
+            id.includes('node_modules/react/')
+          ) {
+            return 'react'
+          }
+          return undefined
         },
       },
     },

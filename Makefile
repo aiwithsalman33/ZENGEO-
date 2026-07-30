@@ -67,7 +67,7 @@ lint: ## Lint and type-check both sides
 
 audit: ## Dependency vulnerability scan
 	$(COMPOSE) exec backend pip-audit --strict --requirement requirements.txt
-	$(COMPOSE) exec frontend npm audit --audit-level=high
+	$(COMPOSE) exec frontend npm run audit:check
 
 shell: ## Shell inside the backend container
 	$(COMPOSE) exec backend bash

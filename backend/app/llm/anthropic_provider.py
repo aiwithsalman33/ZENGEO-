@@ -84,16 +84,19 @@ class AnthropicProvider(LLMProvider):
         client = self._client()
         # No `thinking` or `effort` override: this must read like the answer a
         # real person would get, and the defaults differ per model.
-        kwargs: dict[str, object] = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "messages": [{"role": "user", "content": prompt}],
-        }
+        # `extra_body` carries the web-search tool so the call stays on the
+        # SDK's typed overload rather than a loose kwargs dict.
+        extra: dict[str, object] = {}
         if self._web_search_enabled():
-            kwargs["tools"] = [{"type": "web_search_20260209", "name": "web_search"}]
+            extra["tools"] = [{"type": "web_search_20260209", "name": "web_search"}]
 
         try:
-            message = await client.messages.create(**kwargs)  # type: ignore[arg-type]
+            message = await client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+                extra_body=extra or None,
+            )
         except anthropic.AuthenticationError as exc:
             raise InvalidAPIKey("Anthropic rejected this API key") from exc
         except anthropic.RateLimitError as exc:

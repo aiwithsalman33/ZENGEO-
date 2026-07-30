@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Generic, TypeVar
-
 from pydantic import BaseModel, ConfigDict, Field
-
-T = TypeVar("T")
 
 
 class StrictModel(BaseModel):
@@ -29,7 +25,7 @@ class Message(BaseModel):
     detail: str
 
 
-class Page(BaseModel, Generic[T]):
+class Page[T](BaseModel):
     items: list[T]
     total: int
     page: int

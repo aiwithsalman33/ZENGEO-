@@ -14,17 +14,15 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Coroutine
-from typing import Any, TypeVar
+from typing import Any
 
 from app.core.logging import get_logger
 from app.worker.celery_app import celery_app
 
 log = get_logger("worker")
 
-T = TypeVar("T")
 
-
-def run_in_loop(coro: Coroutine[Any, Any, T]) -> T:
+def run_in_loop[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run a coroutine in a fresh loop, disposing the DB engine afterwards."""
 
     async def _wrapped() -> T:

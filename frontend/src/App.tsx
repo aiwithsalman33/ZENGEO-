@@ -31,9 +31,11 @@ const AdminUserDetail = lazy(() => import('@/pages/admin/UserDetail'))
 const AdminAudits = lazy(() => import('@/pages/admin/Audits'))
 const AdminActivity = lazy(() => import('@/pages/admin/Activity'))
 
+// React Router 7 makes the former v7_* future flags the default behaviour, so
+// they no longer need to be opted into on the router.
 export default function App() {
   return (
-    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <BrowserRouter>
       <QueryProvider>
         <AuthProvider>
           <TooltipProvider delayDuration={200}>

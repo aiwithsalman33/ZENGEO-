@@ -128,7 +128,9 @@ def validate_url(raw_url: str) -> str:
     # Every address must be safe. One public and one private record is a
     # deliberate bypass attempt, not a misconfiguration to tolerate.
     for info in infos:
-        assert_public_address(info[4][0])
+        # sockaddr is (host, port) for IPv4 and (host, port, flow, scope) for
+        # IPv6; the host is always the first element.
+        assert_public_address(str(info[4][0]))
 
     return raw_url
 
